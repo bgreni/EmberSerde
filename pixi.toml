@@ -1,0 +1,15 @@
+[workspace]
+authors = ["Brian Grenier <grenierb96@gmail.com>"]
+channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
+name = "emberserde"
+platforms = ["osx-arm64", "linux-aarch64", "linux-64"]
+version = "0.1.0"
+
+[tasks]
+format = "mojo format -l 80 ."
+test = "python3 run_tests.py"
+build = "mojo precompile emberserde -o emberserde.mojoc"
+precommit = { depends-on = ["format", "test"] }
+
+[dependencies]
+mojo = ">=1.0.0b2.dev2026052815,<2"
