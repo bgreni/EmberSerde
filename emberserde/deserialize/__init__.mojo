@@ -127,16 +127,12 @@ trait Deserializer:
         st.end()
         return result^
 
-
-# Public entry point — the dual of `serialize`. `T` is explicit (unlike
-# `serialize`, there is no value argument to infer it from). The `comptime
-# assert` defers for an abstract `T` and fires with a readable message at
-# instantiation when `T` isn't `Deserializable`.
 def deserialize[
     T: AnyType
 ](mut d: Some[Deserializer]) raises DeserializationError -> T:
-    comptime assert conforms_to(T, Deserializable), (
-        "type does not conform to Deserializable; a plain struct can implement"
-        " it as `return d.expect_struct[Self]()`"
-    )
-    return T.deserialize(d)
+    comptime if conforms_to(T, Deserializable):
+        return T.deserialize(d)
+    elif conforms_to(T, Defaultable & Movable & ImplicitlyDestructible):
+        return d.expect_struct[T]()
+    else:
+        comptime assert False, "Type does not implement any required traits"

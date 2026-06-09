@@ -16,7 +16,7 @@ __extension String(Serializable):
 __extension SIMD(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
         comptime if Self.size == 1:
-            s.serialize_number(self)
+            s.serialize_number(rebind[Scalar[Self.dtype]](self))
         else:
             var seq = s.begin_seq()
             for i in range(Self.size):
