@@ -34,5 +34,27 @@ def test_string() raises:
     assert_equal(debug_string(String("")), '""')
 
 
+# A literal-typed field stays `IntLiteral`/`FloatLiteral` (it does not
+# materialize to `Int`/`Float64`), so serializing it through reflection
+# dispatches to the literal impls.
+struct Foo(Copyable, Defaultable):
+    var x: IntLiteral[(42).value]
+
+    def __init__(out self):
+        self.x = {}
+
+
+struct Bar(Copyable, Defaultable):
+    var x: FloatLiteral[(3.14).value]
+
+    def __init__(out self):
+        self.x = {}
+
+
+def test_literals() raises:
+    assert_equal(debug_string(Foo()), "test_primitives.Foo { x: 42 }")
+    assert_equal(debug_string(Bar()), "test_primitives.Bar { x: 3.14 }")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

@@ -1,5 +1,5 @@
 @fieldwise_init
-struct SerErrorKind(Copyable, Writable):
+struct SerErrorKind(ImplicitlyCopyable, Writable):
     var _kind: Int
 
 
@@ -10,8 +10,10 @@ struct SerializationError(Copyable, Writable):
 
 
 @fieldwise_init
-struct DerErrorKind(Copyable, Writable):
+struct DerErrorKind(ImplicitlyCopyable, Writable):
     var _kind: Int
+
+    comptime InvalidValue = Self(0)
 
 
 @fieldwise_init

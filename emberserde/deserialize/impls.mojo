@@ -1,6 +1,6 @@
 import emberserde
 from emberserde.deserialize import Deserializer
-from emberserde.error import DeserializationError
+from emberserde.error import DeserializationError, DerErrorKind
 
 
 __extension Bool(Deserializable):
@@ -29,7 +29,7 @@ __extension SIMD(Deserializable):
         else:
             var result = Self()
             var seq = d.begin_seq()
-            comptime for i in range(Self.size):
+            for i in range(Self.size):
                 result[i] = seq.expect_element[Scalar[Self.dtype]]()
             seq.end()
             return result
@@ -40,7 +40,39 @@ __extension Int(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        return Int(d.expect_number[DType.int64]())
+        return Int(d.expect_number[DType.int]())
+
+
+__extension IntLiteral(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        var parsed = Int(d.expect_number[DType.int]())
+
+        if parsed != Self():
+            raise DeserializationError(
+                String(t"Expected {Self()}, received {parsed}"),
+                DerErrorKind.InvalidValue,
+            )
+
+        return Self()
+
+
+__extension FloatLiteral(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        var parsed = Float64(d.expect_number[DType.float64]())
+
+        if parsed != Self():
+            raise DeserializationError(
+                String(t"Expected {Self()}, received {parsed}"),
+                DerErrorKind.InvalidValue,
+            )
+
+        return Self()
 
 
 __extension Optional(Deserializable):
@@ -48,7 +80,6 @@ __extension Optional(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        comptime assert conforms_to(Self.T, Deserializable)
         return d.expect_optional[Self.T]()
 
 
@@ -57,10 +88,25 @@ __extension List(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        comptime assert conforms_to(Self.T, Deserializable)
         var result = Self()
         var seq = d.begin_seq()
         while seq.has_next():
             result.append(seq.expect_element[Self.T]())
+        seq.end()
+        return result^
+
+
+__extension InlineArray(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        var result = Self(uninitialized=True)
+        var seq = d.begin_seq()
+        for i in range(Self.size):
+            _ = seq.has_next()
+            (result.unsafe_ptr() + i).init_pointee_move(
+                seq.expect_element[Self.ElementType]()
+            )
         seq.end()
         return result^

@@ -1,19 +1,7 @@
-from std.reflection import reflect
-from std.builtin.rebind import downcast
-
 from .impls import *
 from emberserde.error import DeserializationError, DerErrorKind
 
 
-# The dual of `Serializable`: a type knows how to build *itself* from a
-# deserializer. Serde uses a `Visitor`; Mojo's `comptime if conforms_to` lets the
-# type pull values out directly. Mirrors the `Serializable` instance method
-# `serialize(self, mut s)` with a static factory.
-#
-# `Movable` is a supertrait: `deserialize` returns `Self` by value, and the
-# recursive container impls must move elements into place. Plain structs opt in
-# with a one-liner `return d.expect_struct[Self]()` (see the custom-impl test),
-# which routes through the reflection-driven default below.
 trait Deserializable(Movable):
     @staticmethod
     def deserialize(
@@ -23,12 +11,9 @@ trait Deserializable(Movable):
 
 
 trait SeqDerState(ImplicitlyDestructible):
-    # True if another element remains; drives the caller's `while` loop.
     def has_next(mut self) raises DeserializationError -> Bool:
         ...
 
-    # `AnyType` (not `Movable`): callers pass `reflect[T].field_types()[i]`,
-    # whose static bound is `AnyType` even when the concrete field is `Movable`.
     def expect_element[T: AnyType](mut self) raises DeserializationError -> T:
         ...
 
@@ -63,9 +48,6 @@ trait StructDerState(ImplicitlyDestructible):
         ...
 
 
-# Per-format trait. The state types are `comptime` members standing in for
-# Mojo's missing associated types (same pattern as `Serializer`). Primitives are
-# strict; composites hand back a state struct the caller drives.
 trait Deserializer:
     comptime SeqType: SeqDerState
     comptime MapType: MapDerState
@@ -96,43 +78,23 @@ trait Deserializer:
     def begin_struct(mut self) raises DeserializationError -> Self.StructType:
         ...
 
+    # TODO: Have an `expect_seq` like we do in `Serializer`.
+    # We don't currently have a generic approach for adding an item into
+    # a collection so we can't do it yet.
+
+
     def expect_struct[
-        T: Defaultable & Movable & ImplicitlyDestructible
-    ](mut self) raises DeserializationError -> T:
-        comptime r = reflect[T]
-        comptime assert r.is_struct(), "expect_struct requires a struct type"
-        comptime names = r.field_names()
+        T: ImplicitlyDestructible
+    ](mut self, out result: T) raises DeserializationError:
+        ...
 
-        var result = T()
-        var st = self.begin_struct()
-
-        comptime for _ in range(r.field_count()):
-            var name = st.expect_field_name()
-            var matched = False
-            comptime for i in range(r.field_count()):
-                if not matched and name == names[i]:
-                    
-                    comptime FT = downcast[
-                        r.field_types()[i], Movable & ImplicitlyDestructible
-                    ]
-                    trait_downcast[Movable & ImplicitlyDestructible](
-                        r.field_ref[i](result)
-                    ) = st.expect_field_value[FT]()
-                    matched = True
-            if not matched:
-                raise DeserializationError(
-                    String("unknown field: ") + name, DerErrorKind(0)
-                )
-
-        st.end()
-        return result^
 
 def deserialize[
     T: AnyType
 ](mut d: Some[Deserializer]) raises DeserializationError -> T:
     comptime if conforms_to(T, Deserializable):
         return T.deserialize(d)
-    elif conforms_to(T, Defaultable & Movable & ImplicitlyDestructible):
+    elif conforms_to(T, ImplicitlyDestructible):
         return d.expect_struct[T]()
     else:
-        comptime assert False, "Type does not implement any required traits"
+        comptime assert False, "Cannot deserialize linear type"

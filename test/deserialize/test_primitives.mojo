@@ -2,8 +2,9 @@
 # back and assert equality. The deserialize-side counterpart of
 # `test_primitives.mojo`.
 
-from std.testing import assert_equal, TestSuite
+from std.testing import assert_equal, TestSuite, assert_raises
 from _debug_format import debug_string, from_debug
+from emberserde.deserialize import DeserializationError
 
 
 def test_bool() raises:
@@ -38,6 +39,32 @@ def test_string() raises:
         from_debug[String](debug_string(String("hello"))), String("hello")
     )
     assert_equal(from_debug[String](debug_string(String(""))), String(""))
+
+
+struct Foo(Copyable, Defaultable):
+    var x: IntLiteral[(42).value]
+
+    def __init__(out self):
+        self.x = {}
+
+
+struct Bar(Copyable, Defaultable):
+    var x: FloatLiteral[(3.14).value]
+
+    def __init__(out self):
+        self.x = {}
+
+
+def test_literals() raises:
+    assert_equal(from_debug[Foo]("Foo { x: 42 }").x, Foo().x)
+
+    with assert_raises():
+        _ = from_debug[Foo]("Foo { x: 43 }")
+
+    assert_equal(from_debug[Bar]("Bar { x: 3.14 }").x, Bar().x)
+
+    with assert_raises():
+        _ = from_debug[Bar]("Bar { x: 2.71 }")
 
 
 def main() raises:

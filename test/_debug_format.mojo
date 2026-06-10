@@ -12,12 +12,15 @@
 # reconstructs a `DebugSerializer[origin]` over the shared buffer. No
 # `UnsafePointer`, no erased `MutAnyOrigin`.
 
-import emberserde
+from std.reflection import reflect
+from std.builtin.rebind import downcast
+
 from emberserde.serialize import (
     Serializer,
     SeqSerState,
     MapSerState,
     StructSerState,
+    serialize
 )
 from emberserde.deserialize import (
     Deserializer,
@@ -25,6 +28,7 @@ from emberserde.deserialize import (
     SeqDerState,
     MapDerState,
     StructDerState,
+    deserialize,
 )
 from emberserde.error import (
     SerializationError,
@@ -43,7 +47,7 @@ struct DebugSeq[origin: MutOrigin](SeqSerState):
             self.out[] += ", "
         self.first = False
         var sub = DebugSerializer(out=self.out)
-        emberserde.serialize.serialize(v, sub)
+        serialize(v, sub)
 
     def end(mut self) raises SerializationError:
         self.out[] += "]"
@@ -59,12 +63,12 @@ struct DebugMap[origin: MutOrigin](MapSerState):
             self.out[] += ", "
         self.first = False
         var sub = DebugSerializer(out=self.out)
-        emberserde.serialize.serialize(k, sub)
+        serialize(k, sub)
 
     def serialize_value(mut self, v: Some[AnyType]) raises SerializationError:
         self.out[] += ": "
         var sub = DebugSerializer(out=self.out)
-        emberserde.serialize.serialize(v, sub)
+        serialize(v, sub)
 
     def end(mut self) raises SerializationError:
         self.out[] += "}"
@@ -84,7 +88,7 @@ struct DebugStruct[origin: MutOrigin](StructSerState):
         self.out[] += field_name
         self.out[] += ": "
         var sub = DebugSerializer(out=self.out)
-        emberserde.serialize.serialize(v, sub)
+        serialize(v, sub)
 
     def end(mut self) raises SerializationError:
         self.out[] += " }"
@@ -141,7 +145,7 @@ struct DebugSerializer[origin: MutOrigin](Serializer):
 def debug_string[T: AnyType, //](value: T) raises SerializationError -> String:
     var buf = String()
     var s = DebugSerializer(out=Pointer(to=buf))
-    emberserde.serialize.serialize(value, s)
+    serialize(value, s)
     return buf^
 
 
@@ -159,6 +163,14 @@ def debug_string[T: AnyType, //](value: T) raises SerializationError -> String:
 
 def _de_error(message: String) -> DeserializationError:
     return DeserializationError(message, DerErrorKind(0))
+
+def __all_dtors_are_trivial[T: AnyType]() -> Bool:
+    comptime r = reflect[T]
+    comptime for i in range(r.field_count()):
+        comptime type = r.field_types()[i]
+        if not downcast[type, ImplicitlyDestructible].__del__is_trivial:
+            return False
+    return True
 
 
 @fieldwise_init
@@ -237,7 +249,7 @@ struct DebugSeqDe[origin: MutOrigin](SeqDerState):
 
     def expect_element[T: AnyType](mut self) raises DeserializationError -> T:
         var sub = DebugDeserializer(cursor=self.cursor)
-        return emberserde.deserialize.deserialize[T](sub)
+        return deserialize[T](sub)
 
     def end(mut self) raises DeserializationError:
         self.cursor[].skip_ws()
@@ -259,14 +271,14 @@ struct DebugMapDe[origin: MutOrigin](MapDerState):
 
     def expect_key[T: AnyType](mut self) raises DeserializationError -> T:
         var sub = DebugDeserializer(cursor=self.cursor)
-        return emberserde.deserialize.deserialize[T](sub)
+        return deserialize[T](sub)
 
     def expect_value[T: AnyType](mut self) raises DeserializationError -> T:
         self.cursor[].skip_ws()
         self.cursor[].expect_lit(":")
         self.cursor[].skip_ws()
         var sub = DebugDeserializer(cursor=self.cursor)
-        return emberserde.deserialize.deserialize[T](sub)
+        return deserialize[T](sub)
 
     def end(mut self) raises DeserializationError:
         self.cursor[].skip_ws()
@@ -299,7 +311,7 @@ struct DebugStructDe[origin: MutOrigin](StructDerState):
         T: AnyType
     ](mut self) raises DeserializationError -> T:
         var sub = DebugDeserializer(cursor=self.cursor)
-        return emberserde.deserialize.deserialize[T](sub)
+        return deserialize[T](sub)
 
     def end(mut self) raises DeserializationError:
         self.cursor[].skip_ws()
@@ -352,7 +364,7 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         if self.cursor[].starts_with("None"):
             self.cursor[].expect_lit("None")
             return Optional[T]()
-        return Optional[T](emberserde.deserialize.deserialize[T](self))
+        return Optional[T](deserialize[T](self))
 
     def begin_seq(mut self) raises DeserializationError -> Self.SeqType:
         self.cursor[].skip_ws()
@@ -373,9 +385,42 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         self.cursor[].skip_ws()
         return DebugStructDe(cursor=self.cursor)
 
+    def expect_struct[
+        T: ImplicitlyDestructible
+    ](mut self, out result: T) raises DeserializationError:
+        comptime r = reflect[T]
+        comptime assert r.is_struct(), "expect_struct requires a struct type"
+        comptime names = r.field_names()
+        comptime if conforms_to(T, Defaultable):
+            result = T()
+        else:
+            comptime assert __all_dtors_are_trivial[T](), (
+                "Cannot deserialize non-Defaultable struct containing fields with"
+                " non-trivial destructors"
+            )
+            __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(result))
+        var st = self.begin_struct()
+
+        comptime for _ in range(r.field_count()):
+            var name = st.expect_field_name()
+            var matched = False
+            comptime for i in range(r.field_count()):
+                if not matched and name == names[i]:
+                    comptime FT = downcast[
+                        r.field_types()[i], Movable & ImplicitlyDestructible
+                    ]
+                    trait_downcast[Movable & ImplicitlyDestructible](
+                        r.field_ref[i](result)
+                    ) = st.expect_field_value[FT]()
+                    matched = True
+            if not matched:
+                raise _de_error(String("unknown field: ") + name)
+
+        st.end()
+
 
 # Convenience: parse `s` through a fresh `DebugDeserializer` and build a `T`.
 def from_debug[T: AnyType](var s: String) raises DeserializationError -> T:
     var cursor = DebugCursor(s^, 0)
     var d = DebugDeserializer(cursor=Pointer(to=cursor))
-    return emberserde.deserialize.deserialize[T](d)
+    return deserialize[T](d)

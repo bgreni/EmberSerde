@@ -45,5 +45,20 @@ def test_serialize_seq_of_string() raises:
     assert_equal(debug_string(l), '["a", "bb"]')
 
 
+def test_inline_array_of_int() raises:
+    var a: InlineArray[Int, 3] = [1, 2, 3]
+    assert_equal(debug_string(a), "[1, 2, 3]")
+
+
+def test_inline_array_single_element() raises:
+    var a: InlineArray[Int, 1] = [7]
+    assert_equal(debug_string(a), "[7]")
+
+
+def test_inline_array_of_string() raises:
+    var a: InlineArray[String, 2] = ["a", "bb"]
+    assert_equal(debug_string(a), '["a", "bb"]')
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

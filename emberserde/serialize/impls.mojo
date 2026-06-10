@@ -51,3 +51,8 @@ __extension Optional(Serializable):
 __extension List(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
         s.serialize_seq(self)
+
+
+__extension InlineArray(Serializable):
+    def serialize(self, mut s: Some[Serializer]) raises SerializationError:
+        s.serialize_seq(self)
