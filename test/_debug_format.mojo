@@ -12,15 +12,13 @@
 # reconstructs a `DebugSerializer[origin]` over the shared buffer. No
 # `UnsafePointer`, no erased `MutAnyOrigin`.
 
-from std.reflection import reflect
-from std.builtin.rebind import downcast
-
 from emberserde.serialize import (
     Serializer,
     SeqSerState,
     MapSerState,
     StructSerState,
-    serialize
+    TupleSerState,
+    serialize,
 )
 from emberserde.deserialize import (
     Deserializer,
@@ -28,6 +26,7 @@ from emberserde.deserialize import (
     SeqDerState,
     MapDerState,
     StructDerState,
+    TupleDerState,
     deserialize,
 )
 from emberserde.error import (
@@ -94,6 +93,23 @@ struct DebugStruct[origin: MutOrigin](StructSerState):
         self.out[] += " }"
 
 
+# Rust-`Debug`-style tuples render as `(a, b, c)`.
+@fieldwise_init
+struct DebugTuple[origin: MutOrigin](TupleSerState):
+    var out: Pointer[String, Self.origin]
+    var first: Bool
+
+    def serialize_element(mut self, v: Some[AnyType]) raises SerializationError:
+        if not self.first:
+            self.out[] += ", "
+        self.first = False
+        var sub = DebugSerializer(out=self.out)
+        serialize(v, sub)
+
+    def end(mut self) raises SerializationError:
+        self.out[] += ")"
+
+
 @fieldwise_init
 struct DebugSerializer[origin: MutOrigin](Serializer):
     var out: Pointer[String, Self.origin]
@@ -101,6 +117,7 @@ struct DebugSerializer[origin: MutOrigin](Serializer):
     comptime MapType = DebugMap[Self.origin]
     comptime SeqType = DebugSeq[Self.origin]
     comptime StructType = DebugStruct[Self.origin]
+    comptime TupleType = DebugTuple[Self.origin]
 
     def serialize_bool(mut self, v: Bool) raises SerializationError:
         self.out[] += "true" if v else "false"
@@ -118,6 +135,14 @@ struct DebugSerializer[origin: MutOrigin](Serializer):
     def serialize_none(mut self) raises SerializationError:
         self.out[] += "None"
 
+    # Rust-`Debug`-faithful: a present optional renders as `Some(payload)`,
+    # exercising the presence-marker hook a binary format would rely on.
+    def serialize_some(mut self, v: Some[AnyType]) raises SerializationError:
+        self.out[] += "Some("
+        var sub = DebugSerializer(out=self.out)
+        serialize(v, sub)
+        self.out[] += ")"
+
     def serialize_bytes(mut self, v: Span[Byte, _]) raises SerializationError:
         self.out[] += "b["
         for i in range(len(v)):
@@ -126,18 +151,31 @@ struct DebugSerializer[origin: MutOrigin](Serializer):
             self.out[] += String(v[i])
         self.out[] += "]"
 
-    def begin_seq(mut self) -> Self.SeqType:
+    def begin_seq(
+        mut self, size_hint: Optional[Int] = None
+    ) raises SerializationError -> Self.SeqType:
+        # Self-describing output: the size hint is not needed.
         self.out[] += "["
         return DebugSeq(out=self.out, first=True)
 
-    def begin_map(mut self) -> Self.MapType:
+    def begin_map(
+        mut self, size_hint: Optional[Int] = None
+    ) raises SerializationError -> Self.MapType:
         self.out[] += "{"
         return DebugMap(out=self.out, first=True)
 
-    def begin_struct[name: String](mut self) -> Self.StructType:
+    def begin_struct[
+        name: String
+    ](mut self, field_count: Int) raises SerializationError -> Self.StructType:
         self.out[] += name
         self.out[] += " { "
         return DebugStruct(out=self.out, first=True)
+
+    def begin_tuple[
+        field_count: Int
+    ](mut self) raises SerializationError -> Self.TupleType:
+        self.out[] += "("
+        return DebugTuple(out=self.out, first=True)
 
 
 # Convenience: serialize `value` through a fresh `DebugSerializer` and return
@@ -163,14 +201,6 @@ def debug_string[T: AnyType, //](value: T) raises SerializationError -> String:
 
 def _de_error(message: String) -> DeserializationError:
     return DeserializationError(message, DerErrorKind(0))
-
-def __all_dtors_are_trivial[T: AnyType]() -> Bool:
-    comptime r = reflect[T]
-    comptime for i in range(r.field_count()):
-        comptime type = r.field_types()[i]
-        if not downcast[type, ImplicitlyDestructible].__del__is_trivial:
-            return False
-    return True
 
 
 @fieldwise_init
@@ -214,6 +244,25 @@ struct DebugCursor(Movable):
         if not self.starts_with(lit):
             raise _de_error(String("expected '") + String(lit) + "'")
         self.pos += lit.byte_length()
+
+    # Skip one whole value: scan to the next `,`/`}`/`]` at nesting depth
+    # zero, balancing brackets/braces/parens and jumping over strings. Used
+    # by `skip_value` to ignore unknown struct fields of any shape.
+    def skip_balanced(mut self):
+        var depth = 0
+        while not self.at_end():
+            var c = self.peek()
+            if depth == 0 and (c == ord(",") or c == ord("}") or c == ord("]")):
+                return
+            if c == ord('"'):
+                self.advance()
+                while not self.at_end() and self.peek() != ord('"'):
+                    self.advance()
+            elif c == ord("[") or c == ord("{") or c == ord("("):
+                depth += 1
+            elif c == ord("]") or c == ord("}") or c == ord(")"):
+                depth -= 1
+            self.advance()
 
     # Read a run of numeric characters: `[-+0-9.eE]`.
     def read_number(mut self) -> String:
@@ -289,8 +338,13 @@ struct DebugMapDe[origin: MutOrigin](MapDerState):
 struct DebugStructDe[origin: MutOrigin](StructDerState):
     var cursor: Pointer[DebugCursor, Self.origin]
 
-    def expect_field_name(mut self) raises DeserializationError -> String:
+    def expect_field_name(
+        mut self,
+    ) raises DeserializationError -> Optional[String]:
         self.cursor[].skip_ws()
+        if self.cursor[].peek() == ord("}"):
+            # End of struct: leave the `}` for `end()` to consume.
+            return None
         if self.cursor[].peek() == ord(","):
             self.cursor[].advance()
             self.cursor[].skip_ws()
@@ -313,9 +367,32 @@ struct DebugStructDe[origin: MutOrigin](StructDerState):
         var sub = DebugDeserializer(cursor=self.cursor)
         return deserialize[T](sub)
 
+    def skip_value(mut self) raises DeserializationError:
+        self.cursor[].skip_ws()
+        self.cursor[].skip_balanced()
+
     def end(mut self) raises DeserializationError:
         self.cursor[].skip_ws()
         self.cursor[].expect_lit("}")
+
+
+@fieldwise_init
+struct DebugTupleDe[origin: MutOrigin](TupleDerState):
+    var cursor: Pointer[DebugCursor, Self.origin]
+    var first: Bool
+
+    def expect_element[T: AnyType](mut self) raises DeserializationError -> T:
+        self.cursor[].skip_ws()
+        if not self.first:
+            self.cursor[].expect_lit(",")
+            self.cursor[].skip_ws()
+        self.first = False
+        var sub = DebugDeserializer(cursor=self.cursor)
+        return deserialize[T](sub)
+
+    def end(mut self) raises DeserializationError:
+        self.cursor[].skip_ws()
+        self.cursor[].expect_lit(")")
 
 
 @fieldwise_init
@@ -325,6 +402,7 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
     comptime SeqType = DebugSeqDe[Self.origin]
     comptime MapType = DebugMapDe[Self.origin]
     comptime StructType = DebugStructDe[Self.origin]
+    comptime TupleType = DebugTupleDe[Self.origin]
 
     def expect_bool(mut self) raises DeserializationError -> Bool:
         self.cursor[].skip_ws()
@@ -364,7 +442,10 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         if self.cursor[].starts_with("None"):
             self.cursor[].expect_lit("None")
             return Optional[T]()
-        return Optional[T](deserialize[T](self))
+        self.cursor[].expect_lit("Some(")
+        var result = Optional[T](deserialize[T](self))
+        self.cursor[].expect_lit(")")
+        return result^
 
     def begin_seq(mut self) raises DeserializationError -> Self.SeqType:
         self.cursor[].skip_ws()
@@ -376,47 +457,27 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         self.cursor[].expect_lit("{")
         return DebugMapDe(cursor=self.cursor)
 
-    def begin_struct(mut self) raises DeserializationError -> Self.StructType:
-        # The struct name precedes `{`; the framing carries no type info the
-        # caller needs, so skip up to and including the opening brace.
+    def begin_struct[
+        T: AnyType
+    ](mut self) raises DeserializationError -> Self.StructType:
+        # Self-describing wire form: field names are read off the text, so
+        # `T` is unused. The struct name precedes `{`; the framing carries no
+        # type info the caller needs, so skip up to and including the brace.
         while not self.cursor[].at_end() and self.cursor[].peek() != ord("{"):
             self.cursor[].advance()
         self.cursor[].expect_lit("{")
         self.cursor[].skip_ws()
         return DebugStructDe(cursor=self.cursor)
 
-    def expect_struct[
-        T: ImplicitlyDestructible
-    ](mut self, out result: T) raises DeserializationError:
-        comptime r = reflect[T]
-        comptime assert r.is_struct(), "expect_struct requires a struct type"
-        comptime names = r.field_names()
-        comptime if conforms_to(T, Defaultable):
-            result = T()
-        else:
-            comptime assert __all_dtors_are_trivial[T](), (
-                "Cannot deserialize non-Defaultable struct containing fields with"
-                " non-trivial destructors"
-            )
-            __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(result))
-        var st = self.begin_struct()
+    def begin_tuple[
+        field_count: Int
+    ](mut self) raises DeserializationError -> Self.TupleType:
+        self.cursor[].skip_ws()
+        self.cursor[].expect_lit("(")
+        return DebugTupleDe(cursor=self.cursor, first=True)
 
-        comptime for _ in range(r.field_count()):
-            var name = st.expect_field_name()
-            var matched = False
-            comptime for i in range(r.field_count()):
-                if not matched and name == names[i]:
-                    comptime FT = downcast[
-                        r.field_types()[i], Movable & ImplicitlyDestructible
-                    ]
-                    trait_downcast[Movable & ImplicitlyDestructible](
-                        r.field_ref[i](result)
-                    ) = st.expect_field_value[FT]()
-                    matched = True
-            if not matched:
-                raise _de_error(String("unknown field: ") + name)
-
-        st.end()
+    # `expect_struct` is intentionally NOT implemented here: the framework's
+    # reflection-driven default on `Deserializer` drives the framing above.
 
 
 # Convenience: parse `s` through a fresh `DebugDeserializer` and build a `T`.

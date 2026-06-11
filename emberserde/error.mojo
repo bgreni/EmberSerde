@@ -2,6 +2,9 @@
 struct SerErrorKind(ImplicitlyCopyable, Writable):
     var _kind: Int
 
+    comptime InvalidValue = Self(0)
+    comptime Custom = Self(1)
+
 
 @fieldwise_init
 struct SerializationError(Copyable, Writable):
@@ -14,6 +17,11 @@ struct DerErrorKind(ImplicitlyCopyable, Writable):
     var _kind: Int
 
     comptime InvalidValue = Self(0)
+    comptime TypeMismatch = Self(1)
+    comptime MissingField = Self(2)
+    comptime DuplicateField = Self(3)
+    comptime UnknownField = Self(4)
+    comptime Custom = Self(5)
 
 
 @fieldwise_init

@@ -1,5 +1,24 @@
+from std.builtin.rebind import downcast
+from std.reflection import reflect
+
 from .impls import *
 from emberserde.error import DeserializationError, DerErrorKind
+
+
+def _all_dtors_are_trivial[T: AnyType]() -> Bool:
+    comptime r = reflect[T]
+    comptime for i in range(r.field_count()):
+        comptime type = r.field_types()[i]
+        if not downcast[type, ImplicitlyDestructible].__del__is_trivial:
+            return False
+    return True
+
+
+# `Optional` fields are the one shape allowed to be absent on the wire: a
+# missing optional field deserializes to its empty default instead of raising
+# `MissingField`.
+def _is_optional[T: AnyType]() -> Bool:
+    return reflect[T].base_name() == "Optional"
 
 
 trait Deserializable(Movable):
@@ -14,6 +33,14 @@ trait SeqDerState(ImplicitlyDestructible):
     def has_next(mut self) raises DeserializationError -> Bool:
         ...
 
+    def expect_element[T: AnyType](mut self) raises DeserializationError -> T:
+        ...
+
+    def end(mut self) raises DeserializationError:
+        ...
+
+
+trait TupleDerState(ImplicitlyDestructible):
     def expect_element[T: AnyType](mut self) raises DeserializationError -> T:
         ...
 
@@ -36,12 +63,22 @@ trait MapDerState(ImplicitlyDestructible):
 
 
 trait StructDerState(ImplicitlyDestructible):
-    def expect_field_name(mut self) raises DeserializationError -> String:
+    # Returns `None` when the struct has no more fields (without consuming
+    # the closing delimiter — that is `end`'s job). Self-describing formats
+    # read the name off the wire; non-self-describing formats return the
+    # next field name from `reflect[T]` in declaration order.
+    def expect_field_name(
+        mut self,
+    ) raises DeserializationError -> Optional[String]:
         ...
 
     def expect_field_value[
         T: AnyType
     ](mut self) raises DeserializationError -> T:
+        ...
+
+    # Consume one value without binding it — used to ignore unknown fields.
+    def skip_value(mut self) raises DeserializationError:
         ...
 
     def end(mut self) raises DeserializationError:
@@ -52,6 +89,7 @@ trait Deserializer:
     comptime SeqType: SeqDerState
     comptime MapType: MapDerState
     comptime StructType: StructDerState
+    comptime TupleType: TupleDerState
 
     def expect_bool(mut self) raises DeserializationError -> Bool:
         ...
@@ -75,18 +113,85 @@ trait Deserializer:
     def begin_map(mut self) raises DeserializationError -> Self.MapType:
         ...
 
-    def begin_struct(mut self) raises DeserializationError -> Self.StructType:
+    def begin_struct[
+        T: AnyType
+    ](mut self) raises DeserializationError -> Self.StructType:
+        ...
+
+    def begin_tuple[
+        field_count: Int
+    ](mut self) raises DeserializationError -> Self.TupleType:
         ...
 
     # TODO: Have an `expect_seq` like we do in `Serializer`.
     # We don't currently have a generic approach for adding an item into
     # a collection so we can't do it yet.
 
-
+    # Reflection-driven default: formats only implement the framing
+    # (`begin_struct` + `StructDerState`); the field-matching loop — with
+    # duplicate detection, unknown-field skipping, and missing-field
+    # handling (`Optional` fields default to empty) — lives here so no
+    # format has to reproduce it.
     def expect_struct[
         T: ImplicitlyDestructible
     ](mut self, out result: T) raises DeserializationError:
-        ...
+        comptime r = reflect[T]
+        comptime assert r.is_struct(), "expect_struct requires a struct type"
+        comptime names = r.field_names()
+
+        comptime if conforms_to(T, Defaultable):
+            result = T()
+        else:
+            comptime assert _all_dtors_are_trivial[T](), (
+                "Cannot deserialize non-Defaultable struct containing fields"
+                " with non-trivial destructors"
+            )
+            __mlir_op.`lit.ownership.mark_initialized`(
+                __get_mvalue_as_litref(result)
+            )
+
+        var st = self.begin_struct[T]()
+        var seen = InlineArray[Bool, r.field_count()](fill=False)
+
+        while True:
+            var name_opt = st.expect_field_name()
+            if not name_opt:
+                break
+            var name = name_opt.value()
+
+            var matched = False
+            comptime for i in range(r.field_count()):
+                if not matched and name == names[i]:
+                    if seen[i]:
+                        raise DeserializationError(
+                            String(t"duplicate field: {names[i]}"),
+                            DerErrorKind.DuplicateField,
+                        )
+                    seen[i] = True
+                    matched = True
+                    comptime FT = downcast[
+                        r.field_types()[i], Movable & ImplicitlyDestructible
+                    ]
+                    trait_downcast[Movable & ImplicitlyDestructible](
+                        r.field_ref[i](result)
+                    ) = st.expect_field_value[FT]()
+            if not matched:
+                st.skip_value()
+
+        comptime for i in range(r.field_count()):
+            if not seen[i]:
+                comptime if _is_optional[r.field_types()[i]]():
+                    ref f = trait_downcast[
+                        Movable & ImplicitlyDestructible & Defaultable
+                    ](r.field_ref[i](result))
+                    f = type_of(f)()
+                else:
+                    raise DeserializationError(
+                        String(t"missing field: {names[i]}"),
+                        DerErrorKind.MissingField,
+                    )
+
+        st.end()
 
 
 def deserialize[

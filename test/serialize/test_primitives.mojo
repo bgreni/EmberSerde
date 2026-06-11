@@ -29,6 +29,15 @@ def test_floats() raises:
     assert_equal(debug_string(Float64(-2.25)), "-2.25")
 
 
+def test_simd() raises:
+    # Multi-lane SIMD serializes as a tuple (lane count is comptime, no length
+    # token), so the debug format renders it with parens.
+    assert_equal(debug_string(SIMD[DType.int32, 4](1, 2, 3, 4)), "(1, 2, 3, 4)")
+    assert_equal(
+        debug_string(SIMD[DType.float64, 2](1.5, -2.25)), "(1.5, -2.25)"
+    )
+
+
 def test_string() raises:
     assert_equal(debug_string(String("hello")), '"hello"')
     assert_equal(debug_string(String("")), '""')

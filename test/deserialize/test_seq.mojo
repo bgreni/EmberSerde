@@ -1,13 +1,13 @@
-# Round-trip `List` values (including nested and empty) through the debug format.
-# The counterpart of `test_seq.mojo`.
+# Deserialize `List` values (including nested and empty) from hand-written
+# debug-format literals. The counterpart of `test_seq.mojo`. Inputs are spelled
+# out explicitly rather than produced by the serializer.
 
 from std.testing import assert_equal, TestSuite
-from _debug_format import debug_string, from_debug
+from _debug_format import from_debug
 
 
 def test_list_of_int() raises:
-    var l: List[Int] = [1, 2, 3]
-    var r = from_debug[List[Int]](debug_string(l))
+    var r = from_debug[List[Int]]("[1, 2, 3]")
     assert_equal(len(r), 3)
     assert_equal(r[0], 1)
     assert_equal(r[1], 2)
@@ -15,33 +15,25 @@ def test_list_of_int() raises:
 
 
 def test_empty_list() raises:
-    var l = List[Int]()
-    var r = from_debug[List[Int]](debug_string(l))
+    var r = from_debug[List[Int]]("[]")
     assert_equal(len(r), 0)
 
 
 def test_single_element() raises:
-    var l: List[Int] = [7]
-    var r = from_debug[List[Int]](debug_string(l))
+    var r = from_debug[List[Int]]("[7]")
     assert_equal(len(r), 1)
     assert_equal(r[0], 7)
 
 
 def test_list_of_string() raises:
-    var l: List[String] = ["a", "bb"]
-    var r = from_debug[List[String]](debug_string(l))
+    var r = from_debug[List[String]]('["a", "bb"]')
     assert_equal(len(r), 2)
     assert_equal(r[0], String("a"))
     assert_equal(r[1], String("bb"))
 
 
 def test_nested_list() raises:
-    var inner0: List[Int] = [1, 2]
-    var inner1: List[Int] = [3]
-    var outer = List[List[Int]]()
-    outer.append(inner0^)
-    outer.append(inner1^)
-    var r = from_debug[List[List[Int]]](debug_string(outer))
+    var r = from_debug[List[List[Int]]]("[[1, 2], [3]]")
     assert_equal(len(r), 2)
     assert_equal(len(r[0]), 2)
     assert_equal(r[0][0], 1)
@@ -51,23 +43,21 @@ def test_nested_list() raises:
 
 
 def test_inline_array_of_int() raises:
-    var a: InlineArray[Int, 3] = [1, 2, 3]
-    var r = from_debug[InlineArray[Int, 3]](debug_string(a))
+    # Statically-sized: rendered with the tuple framing `(...)`, not seq `[...]`.
+    var r = from_debug[InlineArray[Int, 3]]("(1, 2, 3)")
     assert_equal(r[0], 1)
     assert_equal(r[1], 2)
     assert_equal(r[2], 3)
 
 
 def test_inline_array_single_element() raises:
-    var a: InlineArray[Int, 1] = [7]
-    var r = from_debug[InlineArray[Int, 1]](debug_string(a))
+    var r = from_debug[InlineArray[Int, 1]]("(7)")
     assert_equal(r[0], 7)
 
 
 def test_inline_array_of_string() raises:
     # Heap-allocated elements: exercises move-init into uninitialized storage.
-    var a: InlineArray[String, 2] = ["a", "bb"]
-    var r = from_debug[InlineArray[String, 2]](debug_string(a))
+    var r = from_debug[InlineArray[String, 2]]('("a", "bb")')
     assert_equal(r[0], String("a"))
     assert_equal(r[1], String("bb"))
 

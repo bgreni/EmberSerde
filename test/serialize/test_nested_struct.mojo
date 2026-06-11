@@ -50,7 +50,7 @@ def test_list_of_struct() raises:
 def test_struct_with_some() raises:
     assert_equal(
         debug_string(WithOpt(Optional(Int64(3)))),
-        "test_nested_struct.WithOpt { maybe: 3 }",
+        "test_nested_struct.WithOpt { maybe: Some(3) }",
     )
 
 

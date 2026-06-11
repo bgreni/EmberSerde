@@ -1,15 +1,14 @@
 # A plain struct opts into deserialization with a one-line `Deserializable` impl
 # that routes through the reflection-driven `expect_struct` default — the dual of
-# the reflection-driven `serialize_struct`. The struct is *serialized* via the
-# reflection default too (it is not `Serializable`), so this round-trip confirms
-# both sides share a wire form. `Defaultable` is required because `expect_struct`
-# builds the value before filling its fields. Counterpart of
-# `test_custom_impl.mojo`.
+# the reflection-driven `serialize_struct`. Inputs are hand-written debug-format
+# literals (not produced by the serializer) so the assertion pins the actual wire
+# form. `Defaultable` is required because `expect_struct` builds the value before
+# filling its fields. Counterpart of `test_custom_impl.mojo`.
 
 from std.testing import assert_equal, assert_raises, TestSuite
 from emberserde.deserialize import Deserializer, Deserializable
 from emberserde.error import DeserializationError
-from _debug_format import debug_string, from_debug
+from _debug_format import from_debug
 
 
 @fieldwise_init
@@ -49,17 +48,16 @@ struct Record(Copyable, Defaultable, Deserializable, Movable):
 
 
 def test_struct_fields() raises:
-    var p = from_debug[Point](debug_string(Point(1, 2)))
+    var p = from_debug[Point]("Point { x: 1, y: 2 }")
     assert_equal(p.x, 1)
     assert_equal(p.y, 2)
 
 
 def test_struct_inside_list() raises:
     # A struct nested in a sequence exercises recursion through both framings.
-    var pts = List[Point]()
-    pts.append(Point(1, 2))
-    pts.append(Point(3, 4))
-    var r = from_debug[List[Point]](debug_string(pts))
+    var r = from_debug[List[Point]](
+        "[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]"
+    )
     assert_equal(len(r), 2)
     assert_equal(r[0].x, 1)
     assert_equal(r[0].y, 2)
@@ -83,7 +81,8 @@ def test_struct_mixed_types_reordered() raises:
     assert_equal(r.active, True)
 
 
-def test_unknown_field_raises() raises:
+def test_unknown_field_skipped_missing_raises() raises:
+    # `z` is unknown and gets skipped; the raise is for the absent `y`.
     with assert_raises():
         _ = from_debug[Point]("Pt { x: 1, z: 2 }")
 

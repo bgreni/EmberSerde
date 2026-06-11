@@ -45,19 +45,21 @@ def test_serialize_seq_of_string() raises:
     assert_equal(debug_string(l), '["a", "bb"]')
 
 
+# `InlineArray` is statically sized, so it serializes as a tuple (no length
+# token) and the debug format renders it with parens, not brackets.
 def test_inline_array_of_int() raises:
     var a: InlineArray[Int, 3] = [1, 2, 3]
-    assert_equal(debug_string(a), "[1, 2, 3]")
+    assert_equal(debug_string(a), "(1, 2, 3)")
 
 
 def test_inline_array_single_element() raises:
     var a: InlineArray[Int, 1] = [7]
-    assert_equal(debug_string(a), "[7]")
+    assert_equal(debug_string(a), "(7)")
 
 
 def test_inline_array_of_string() raises:
     var a: InlineArray[String, 2] = ["a", "bb"]
-    assert_equal(debug_string(a), '["a", "bb"]')
+    assert_equal(debug_string(a), '("a", "bb")')
 
 
 def main() raises:

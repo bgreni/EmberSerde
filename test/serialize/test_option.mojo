@@ -1,7 +1,8 @@
 # Serialize both arms of `Optional` through the debug format.
 #
-# The framework's `Optional.serialize` impl renders the contained value
-# transparently when present, and `serialize_none` ("None") when empty.
+# The framework's `Optional.serialize` impl routes a present value through
+# `serialize_some` (rendered Rust-`Debug`-style as `Some(v)`), and calls
+# `serialize_none` ("None") when empty.
 
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string
@@ -9,7 +10,7 @@ from _debug_format import debug_string
 
 def test_some() raises:
     var o = Optional(Int64(5))
-    assert_equal(debug_string(o), "5")
+    assert_equal(debug_string(o), "Some(5)")
 
 
 def test_none() raises:
@@ -19,7 +20,7 @@ def test_none() raises:
 
 def test_some_string() raises:
     var o = Optional(String("hi"))
-    assert_equal(debug_string(o), '"hi"')
+    assert_equal(debug_string(o), 'Some("hi")')
 
 
 def main() raises:
