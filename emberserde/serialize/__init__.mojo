@@ -13,7 +13,7 @@ trait Serializable:
         ...
 
 
-trait SeqSerState(ImplicitlyDestructible):
+trait SeqSerState(ImplicitlyDeletable):
     def serialize_element(mut self, v: Some[AnyType]) raises SerializationError:
         ...
 
@@ -21,7 +21,7 @@ trait SeqSerState(ImplicitlyDestructible):
         ...
 
 
-trait MapSerState(ImplicitlyDestructible):
+trait MapSerState(ImplicitlyDeletable):
     def serialize_key(mut self, k: Some[AnyType]) raises SerializationError:
         ...
 
@@ -32,7 +32,7 @@ trait MapSerState(ImplicitlyDestructible):
         ...
 
 
-trait StructSerState(ImplicitlyDestructible):
+trait StructSerState(ImplicitlyDeletable):
     def serialize_field(
         mut self, field_name: String, v: Some[AnyType]
     ) raises SerializationError:
@@ -43,7 +43,7 @@ trait StructSerState(ImplicitlyDestructible):
 
 
 # TODO: Perhaps the size of the tuple could be a parameter in the future.
-trait TupleSerState(ImplicitlyDestructible):
+trait TupleSerState(ImplicitlyDeletable):
     def serialize_element(mut self, v: Some[AnyType]) raises SerializationError:
         ...
 
@@ -107,7 +107,7 @@ trait Serializer:
         ...
 
     def serialize_seq[
-        Seq: Iterable & ImplicitlyDestructible
+        Seq: Iterable
     ](mut self, v: Seq) raises SerializationError:
         # TODO: Switch to nice for loop syntax when it works
 
@@ -116,6 +116,13 @@ trait Serializer:
         #     st.serialize_element(element)
 
         # st.end()
+
+        comptime assert conforms_to(
+            Seq.IteratorType[origin_of(v)], ImplicitlyDeletable & Movable
+        ), (
+            "Cannot serialize sequence with non-movable or non-implicitly"
+            " deletable element type"
+        )
 
         var size_hint: Optional[Int]
         comptime if conforms_to(Seq, Sized):
@@ -132,7 +139,7 @@ trait Serializer:
             except e:
                 break
             st.serialize_element(
-                trait_downcast_var[ImplicitlyDestructible & Movable](element^)
+                trait_downcast_var[ImplicitlyDeletable & Movable](element^)
             )
         st.end()
 

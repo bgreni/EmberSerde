@@ -1,7 +1,16 @@
 import emberserde
 from std.builtin.rebind import downcast
+from std.os import abort
 from emberserde.deserialize import Deserializer
 from emberserde.error import DeserializationError, DerErrorKind
+
+
+# Drop helper for retiring a partially-built collection on an error-unwind path.
+# `List`/`Dict` are `@explicit_destroy`, so a `var` of a generic element type
+# cannot be implicitly destroyed — but a value statically known to be
+# `ImplicitlyDeletable` can just fall out of scope here.
+def _drop_deletable[T: ImplicitlyDeletable](var x: T):
+    pass
 
 
 __extension Bool(Deserializable):
@@ -28,23 +37,12 @@ __extension SIMD(Deserializable):
         comptime if Self.size == 1:
             return d.expect_number[Self.dtype]()
         else:
-            # Tuple mirror of the serialize side: the lane count comes from the
-            # type, so there is no length token to read and no `has_next` guard
-            # — `begin_tuple` fixes the element count up front.
             var result = Self()
             var tup = d.begin_tuple[Self.size]()
             for i in range(Self.size):
                 result[i] = tup.expect_element[Scalar[Self.dtype]]()
             tup.end()
             return result
-
-
-__extension Int(Deserializable):
-    @staticmethod
-    def deserialize(
-        mut d: Some[Deserializer],
-    ) raises DeserializationError -> Self:
-        return Int(d.expect_number[DType.int]())
 
 
 __extension IntLiteral(Deserializable):
@@ -93,10 +91,21 @@ __extension List(Deserializable):
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
         var result = Self()
-        var seq = d.begin_seq()
-        while seq.has_next():
-            result.append(seq.expect_element[Self.T]())
-        seq.end()
+        try:
+            var seq = d.begin_seq()
+            while seq.has_next():
+                result.append(seq.expect_element[Self.T]())
+            seq.end()
+        except e:
+            comptime if conforms_to(Self.T, ImplicitlyDeletable):
+                result^.destroy_with(
+                    _drop_deletable[downcast[Self.T, ImplicitlyDeletable]]
+                )
+            else:
+                comptime assert (
+                    False
+                ), "List deserialize requires ImplicitlyDeletable elements"
+            raise e^
         return result^
 
 
@@ -137,15 +146,11 @@ __extension Tuple(Deserializable):
         var state = d.begin_tuple[Self.__len__()]()
         var result = Self()
 
-        # A tuple element ref erases to `AnyType` (like a reflected struct
-        # field), so assign through `trait_downcast` to a concrete-enough
-        # trait combo — a bare `result[i] = ...` cannot destroy the erased
-        # default value it overwrites.
         comptime for i in range(Self.__len__()):
             comptime ET = downcast[
-                Self.element_types[i], Movable & ImplicitlyDestructible
+                Self.element_types[i], Movable & ImplicitlyDeletable
             ]
-            trait_downcast[Movable & ImplicitlyDestructible](
+            trait_downcast[Movable & ImplicitlyDeletable](
                 result[i]
             ) = state.expect_element[ET]()
 

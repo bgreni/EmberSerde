@@ -9,7 +9,7 @@ def _all_dtors_are_trivial[T: AnyType]() -> Bool:
     comptime r = reflect[T]
     comptime for i in range(r.field_count()):
         comptime type = r.field_types()[i]
-        if not downcast[type, ImplicitlyDestructible].__del__is_trivial:
+        if not downcast[type, ImplicitlyDeletable].__del__is_trivial:
             return False
     return True
 
@@ -17,7 +17,7 @@ def _all_dtors_are_trivial[T: AnyType]() -> Bool:
 # `Optional` fields are the one shape allowed to be absent on the wire: a
 # missing optional field deserializes to its empty default instead of raising
 # `MissingField`.
-def _is_optional[T: AnyType]() -> Bool:
+def __is_optional[T: AnyType]() -> Bool:
     return reflect[T].base_name() == "Optional"
 
 
@@ -29,7 +29,7 @@ trait Deserializable(Movable):
         ...
 
 
-trait SeqDerState(ImplicitlyDestructible):
+trait SeqDerState(ImplicitlyDeletable):
     def has_next(mut self) raises DeserializationError -> Bool:
         ...
 
@@ -40,7 +40,7 @@ trait SeqDerState(ImplicitlyDestructible):
         ...
 
 
-trait TupleDerState(ImplicitlyDestructible):
+trait TupleDerState(ImplicitlyDeletable):
     def expect_element[T: AnyType](mut self) raises DeserializationError -> T:
         ...
 
@@ -48,7 +48,7 @@ trait TupleDerState(ImplicitlyDestructible):
         ...
 
 
-trait MapDerState(ImplicitlyDestructible):
+trait MapDerState(ImplicitlyDeletable):
     def has_next(mut self) raises DeserializationError -> Bool:
         ...
 
@@ -62,7 +62,7 @@ trait MapDerState(ImplicitlyDestructible):
         ...
 
 
-trait StructDerState(ImplicitlyDestructible):
+trait StructDerState(ImplicitlyDeletable):
     # Returns `None` when the struct has no more fields (without consuming
     # the closing delimiter — that is `end`'s job). Self-describing formats
     # read the name off the wire; non-self-describing formats return the
@@ -127,13 +127,8 @@ trait Deserializer:
     # We don't currently have a generic approach for adding an item into
     # a collection so we can't do it yet.
 
-    # Reflection-driven default: formats only implement the framing
-    # (`begin_struct` + `StructDerState`); the field-matching loop — with
-    # duplicate detection, unknown-field skipping, and missing-field
-    # handling (`Optional` fields default to empty) — lives here so no
-    # format has to reproduce it.
     def expect_struct[
-        T: ImplicitlyDestructible
+        T: ImplicitlyDeletable
     ](mut self, out result: T) raises DeserializationError:
         comptime r = reflect[T]
         comptime assert r.is_struct(), "expect_struct requires a struct type"
@@ -170,9 +165,9 @@ trait Deserializer:
                     seen[i] = True
                     matched = True
                     comptime FT = downcast[
-                        r.field_types()[i], Movable & ImplicitlyDestructible
+                        r.field_types()[i], Movable & ImplicitlyDeletable
                     ]
-                    trait_downcast[Movable & ImplicitlyDestructible](
+                    trait_downcast[Movable & ImplicitlyDeletable](
                         r.field_ref[i](result)
                     ) = st.expect_field_value[FT]()
             if not matched:
@@ -180,9 +175,9 @@ trait Deserializer:
 
         comptime for i in range(r.field_count()):
             if not seen[i]:
-                comptime if _is_optional[r.field_types()[i]]():
+                comptime if __is_optional[r.field_types()[i]]():
                     ref f = trait_downcast[
-                        Movable & ImplicitlyDestructible & Defaultable
+                        Movable & ImplicitlyDeletable & Defaultable
                     ](r.field_ref[i](result))
                     f = type_of(f)()
                 else:
@@ -199,7 +194,7 @@ def deserialize[
 ](mut d: Some[Deserializer]) raises DeserializationError -> T:
     comptime if conforms_to(T, Deserializable):
         return T.deserialize(d)
-    elif conforms_to(T, ImplicitlyDestructible):
+    elif conforms_to(T, ImplicitlyDeletable):
         return d.expect_struct[T]()
     else:
         comptime assert False, "Cannot deserialize linear type"

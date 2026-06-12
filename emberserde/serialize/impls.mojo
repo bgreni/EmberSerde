@@ -27,11 +27,6 @@ __extension SIMD(Serializable):
             tup.end()
 
 
-__extension Int(Serializable):
-    def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        s.serialize_number(Int64(self))
-
-
 __extension IntLiteral(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
         s.serialize_number(Int64(Int(self)))
