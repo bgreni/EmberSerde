@@ -71,7 +71,8 @@ __extension InlineArray(Serializable):
 
 __extension Tuple(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        var seq = s.begin_tuple[Self.__len__()]()
-        comptime for i in range(Self.__len__()):
+        comptime length = Self.__len__()
+        var seq = s.begin_tuple[length]()
+        comptime for i in range(length):
             seq.serialize_element(self[i])
         seq.end()

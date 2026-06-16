@@ -12,4 +12,4 @@ build = "mojo precompile emberserde -o emberserde.mojoc"
 precommit = { depends-on = ["format", "test"] }
 
 [dependencies]
-mojo = ">=1.0.0b2.dev2026052815,<2"
+mojo = ">=1.0.0b3.dev2026061606,<2"
