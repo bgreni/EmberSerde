@@ -1,5 +1,6 @@
 import emberserde
-from std.builtin.rebind import downcast
+from std.builtin.rebind import downcast, rebind_var
+from std.memory import OwnedPointer, ArcPointer
 from std.os import abort
 from emberserde.deserialize import Deserializer
 from emberserde.error import DeserializationError, DerErrorKind
@@ -157,3 +158,29 @@ __extension Tuple(Deserializable):
         state.end()
 
         return result^
+
+
+__extension OwnedPointer(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        return rebind_var[Self](
+            OwnedPointer(
+                emberserde.deserialize.deserialize[downcast[Self.T, Movable]](d)
+            )
+        )
+
+
+__extension ArcPointer(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        # Transparent inverse of the serialize impl: deserialize the pointee
+        # and wrap it in a fresh allocation. Sharing is NOT reconstructed —
+        # values that aliased one `ArcPointer` on the way out come back as
+        # independent allocations, since the wire never carried the aliasing
+        # (same as serde's `Rc`/`Arc`). `ArcPointer`'s own `T` is already
+        # `Movable & ImplicitlyDeletable`, so no downcast is needed here.
+        return Self(emberserde.deserialize.deserialize[Self.T](d))

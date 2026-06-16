@@ -1,4 +1,5 @@
 import emberserde
+from std.memory import OwnedPointer, ArcPointer
 from emberserde.serialize import Serializer
 from emberserde.error import SerializationError
 
@@ -76,3 +77,27 @@ __extension Tuple(Serializable):
         comptime for i in range(length):
             seq.serialize_element(self[i])
         seq.end()
+
+
+__extension OwnedPointer(Serializable):
+    def serialize(self, mut s: Some[Serializer]) raises SerializationError:
+        # Transparent, like serde's `Box<T>`: a boxed value serializes exactly
+        # as its pointee, with no wrapper framing. A self-referential structure
+        # would recurse forever here — the same cycle caveat serde carries.
+        emberserde.serialize.serialize(self[], s)
+
+
+__extension ArcPointer(Serializable):
+    def serialize(self, mut s: Some[Serializer]) raises SerializationError:
+        emberserde.serialize.serialize(self[], s)
+
+
+__extension Pointer(Serializable):
+    def serialize(self, mut s: Some[Serializer]) raises SerializationError:
+        comptime assert (
+            Self.address_space == AddressSpace.GENERIC
+        ), "Cannot serialize pointer with non-generic address space"
+        comptime GenericPtr = Pointer[
+            Self.type, Self.origin, AddressSpace.GENERIC
+        ]
+        emberserde.serialize.serialize(rebind[GenericPtr](self)[], s)

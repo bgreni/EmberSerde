@@ -29,6 +29,8 @@ mojo run -D ASSERT=all -I . -I test test/serialize/test_primitives.mojo
 
 Always use the `mojo-syntax` skill when writing or editing Mojo. This codebase uses current/nightly Mojo syntax that differs from older conventions: `comptime` (not `alias`), typed raises (`raises SerializationError`), `reflect[T]`, `conforms_to`, `Some[Trait]` generic args, `trait_downcast_var`, `__extension`.
 
+**Mojo stdlib source is checked out locally at `~/Coding/mojo/mojo/stdlib/std/`** — read it directly when you need exact API signatures, trait conformances, or import paths (e.g. `OwnedPointer` lives in `memory/owned_pointer.mojo`, imported via `from std.memory import OwnedPointer`). It is more reliable than the IDE language server, which sometimes reports spurious "can't find a struct named ..." / "failed to resolve parent package" errors against perfectly valid stdlib imports; trust a `pixi run test`/build over those diagnostics.
+
 ## Architecture
 
 The framework mirrors serde's "the type asks, the format delivers" split, adapted to Mojo:
