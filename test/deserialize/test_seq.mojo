@@ -1,8 +1,9 @@
-# Deserialize `List` values (including nested and empty) from hand-written
-# debug-format literals. The counterpart of `test_seq.mojo`. Inputs are spelled
-# out explicitly rather than produced by the serializer.
+# Deserialize `List`/`InlineArray`/`Set` values (including nested and empty)
+# from hand-written debug-format literals. The counterpart of `test_seq.mojo`.
+# Inputs are spelled out explicitly rather than produced by the serializer.
 
-from std.testing import assert_equal, TestSuite
+from std.collections import Set
+from std.testing import assert_equal, assert_true, assert_false, TestSuite
 from _debug_format import from_debug
 
 
@@ -60,6 +61,42 @@ def test_inline_array_of_string() raises:
     var r = from_debug[InlineArray[String, 2]]('("a", "bb")')
     assert_equal(r[0], String("a"))
     assert_equal(r[1], String("bb"))
+
+
+# A `Set` is carried as a seq, so the inputs use seq framing `[...]`.
+def test_set_of_int() raises:
+    var r = from_debug[Set[Int]]("[1, 2, 3]")
+    assert_equal(len(r), 3)
+    assert_true(1 in r)
+    assert_true(2 in r)
+    assert_true(3 in r)
+
+
+def test_empty_set() raises:
+    var r = from_debug[Set[Int]]("[]")
+    assert_equal(len(r), 0)
+
+
+def test_set_single_element() raises:
+    var r = from_debug[Set[Int]]("[7]")
+    assert_equal(len(r), 1)
+    assert_true(7 in r)
+
+
+def test_set_of_string() raises:
+    var r = from_debug[Set[String]]('["a", "bb"]')
+    assert_equal(len(r), 2)
+    assert_true(String("a") in r)
+    assert_true(String("bb") in r)
+    assert_false(String("c") in r)
+
+
+def test_set_dedups_on_deserialize() raises:
+    # Set semantics: repeated elements on the wire collapse to one.
+    var r = from_debug[Set[Int]]("[1, 1, 2]")
+    assert_equal(len(r), 2)
+    assert_true(1 in r)
+    assert_true(2 in r)
 
 
 def main() raises:

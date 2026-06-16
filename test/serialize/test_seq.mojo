@@ -1,6 +1,8 @@
-# Serialize `List` values (including nested and empty) through the debug format.
+# Serialize `List`/`InlineArray`/`Set` values (including nested and empty)
+# through the debug format.
 
 import emberserde
+from std.collections import Set
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string, DebugSerializer
 
@@ -60,6 +62,39 @@ def test_inline_array_single_element() raises:
 def test_inline_array_of_string() raises:
     var a: InlineArray[String, 2] = ["a", "bb"]
     assert_equal(debug_string(a), '("a", "bb")')
+
+
+# A `Set` rides the wire as a seq, so it renders with seq framing `[...]`, not
+# `{...}`. Mojo's `Set` is `Dict`-backed and preserves insertion order, so the
+# rendered strings are deterministic.
+def test_set_of_int() raises:
+    var s: Set[Int] = {1, 2, 3}
+    assert_equal(debug_string(s), "[1, 2, 3]")
+
+
+def test_empty_set() raises:
+    var s = Set[Int]()
+    assert_equal(debug_string(s), "[]")
+
+
+def test_set_single_element() raises:
+    var s = Set[Int](7)
+    assert_equal(debug_string(s), "[7]")
+
+
+def test_set_of_string() raises:
+    # Heap-allocated elements: exercises the destructor on the cleanup path.
+    var s: Set[String] = {"a", "bb"}
+    assert_equal(debug_string(s), '["a", "bb"]')
+
+
+def test_set_dedups() raises:
+    # Adding a duplicate is a no-op, so only the first insertion shows up.
+    var s = Set[Int]()
+    s.add(1)
+    s.add(2)
+    s.add(1)
+    assert_equal(debug_string(s), "[1, 2]")
 
 
 def main() raises:

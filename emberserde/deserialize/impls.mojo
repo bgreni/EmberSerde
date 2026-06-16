@@ -1,5 +1,6 @@
 import emberserde
 from std.builtin.rebind import downcast, rebind_var
+from std.collections import Set
 from std.memory import OwnedPointer, ArcPointer
 from std.os import abort
 from emberserde.deserialize import Deserializer
@@ -121,6 +122,19 @@ __extension Dict(Deserializable):
             var k = m.expect_key[Self.K]()
             result[k^] = m.expect_value[Self.V]()
         m.end()
+        return result^
+
+
+__extension Set(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        var result = Self()
+        var seq = d.begin_seq()
+        while seq.has_next():
+            result.add(seq.expect_element[Self.T]())
+        seq.end()
         return result^
 
 

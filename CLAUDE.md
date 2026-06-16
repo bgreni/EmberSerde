@@ -25,6 +25,8 @@ mojo run -D ASSERT=all -I . -I test test/serialize/test_primitives.mojo
 
 `run_tests.py` walks `test/` **recursively**, runs every `test_*.mojo` as its own `mojo` invocation, and skips helper modules (anything not matching `test_*.mojo`, e.g. `_debug_format.mojo`, which is importable but not executed). Tests are split into `test/serialize/` and `test/deserialize/`; the shared `_debug_format.mojo` helper stays at the `test/` root so both sides import it via `-I test`. Each test file ends with `TestSuite.discover_tests[__functions_in_module()]().run()`.
 
+**Add coverage to the existing test file that already owns the topic — don't spin up a new `test_*.mojo` per type.** The files are organized by data-model category, not by type: collection types (`List`, `InlineArray`, `Set`, ...) go in `test_seq.mojo`, key/value types in `test_map.mojo`, etc. A new test file is only warranted when a genuinely new category appears that no existing file covers.
+
 ## Writing Mojo
 
 Always use the `mojo-syntax` skill when writing or editing Mojo. This codebase uses current/nightly Mojo syntax that differs from older conventions: `comptime` (not `alias`), typed raises (`raises SerializationError`), `reflect[T]`, `conforms_to`, `Some[Trait]` generic args, `trait_downcast_var`, `__extension`.

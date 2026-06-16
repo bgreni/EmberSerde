@@ -1,4 +1,5 @@
 import emberserde
+from std.collections import Set
 from std.memory import OwnedPointer, ArcPointer
 from emberserde.serialize import Serializer
 from emberserde.error import SerializationError
@@ -60,10 +61,13 @@ __extension Dict(Serializable):
         m.end()
 
 
+__extension Set(Serializable):
+    def serialize(self, mut s: Some[Serializer]) raises SerializationError:
+        s.serialize_seq(self)
+
+
 __extension InlineArray(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        # Statically-sized array: length is part of the type, so serialize as
-        # a tuple (no length prefix) rather than a seq.
         var tup = s.begin_tuple[Self.size]()
         for i in range(Self.size):
             tup.serialize_element(self[i])
