@@ -1,17 +1,3 @@
-# Struct deserialization through the reflection-driven `expect_struct` default
-# (the dual of the reflection-driven `serialize_struct`). Two ways in are
-# exercised: a struct that opts in with a one-line `Deserializable` impl
-# delegating to `expect_struct`, and a plain struct the framework default
-# handles with no impl at all.
-#
-# Inputs are hand-written debug-format literals (never produced by the
-# serializer), so the assertions pin the actual wire form and a symmetric
-# encode/decode bug can't slip past undetected. The struct *name* in a literal
-# is a free tag the reader ignores; only field names are matched, by name and
-# not position. The default also carries field-evolution semantics: unknown
-# fields are skipped, duplicates and missing required fields raise (with the
-# matching `DerErrorKind`), and a missing `Optional` field falls back to empty.
-
 from std.testing import (
     assert_equal,
     assert_true,
@@ -24,9 +10,6 @@ from emberserde.error import DeserializationError, DerErrorKind
 from _debug_format import from_debug
 
 
-# Opts in explicitly: a one-line `Deserializable` impl delegating to the
-# framework default. `Defaultable` is required because `expect_struct` builds
-# the value before filling its fields.
 @fieldwise_init
 struct Point(Copyable, Defaultable, Deserializable, Movable):
     var x: Int
@@ -43,8 +26,6 @@ struct Point(Copyable, Defaultable, Deserializable, Movable):
         return d.expect_struct[Self]()
 
 
-# Heterogeneous fields make name-vs-position matching observable: read
-# positionally, `id` would try to parse `"ada"` and `active` would mismatch.
 @fieldwise_init
 struct Record(Copyable, Defaultable, Deserializable, Movable):
     var id: Int
@@ -63,9 +44,6 @@ struct Record(Copyable, Defaultable, Deserializable, Movable):
         return d.expect_struct[Self]()
 
 
-# No `Deserializable` impl and not `Defaultable`: the framework default handles
-# it directly, exercising the `mark_initialized` escape hatch (all fields have
-# trivial destructors).
 @fieldwise_init
 struct Pair(Copyable, Movable):
     var x: Int
@@ -89,7 +67,6 @@ def test_struct_fields() raises:
 
 
 def test_struct_inside_list() raises:
-    # A struct nested in a sequence exercises recursion through both framings.
     var r = from_debug[List[Point]](
         "[Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]"
     )
@@ -101,13 +78,10 @@ def test_struct_inside_list() raises:
 
 
 def test_fields_matched_by_name_not_position() raises:
-    # Keys in reverse declaration order must map by name, not position.
     var p = from_debug[Point]("Pt { y: 20, x: 10 }")
     assert_equal(p.x, 10)
     assert_equal(p.y, 20)
 
-    # Scrambled keys with distinct field types: positional reading would
-    # mis-pair the values and the types wouldn't line up.
     var r = from_debug[Record]('Rec { name: "ada", active: true, id: 7 }')
     assert_equal(r.id, 7)
     assert_equal(r.name, String("ada"))

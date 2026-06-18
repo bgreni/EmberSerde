@@ -1,5 +1,3 @@
-# Serialize each primitive through the debug format and assert its rendering.
-
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string
 

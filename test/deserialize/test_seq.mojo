@@ -1,7 +1,3 @@
-# Deserialize `List`/`InlineArray`/`Set` values (including nested and empty)
-# from hand-written debug-format literals. The counterpart of `test_seq.mojo`.
-# Inputs are spelled out explicitly rather than produced by the serializer.
-
 from std.collections import Set
 from std.testing import assert_equal, assert_true, assert_false, TestSuite
 from _debug_format import from_debug
@@ -57,7 +53,6 @@ def test_inline_array_single_element() raises:
 
 
 def test_inline_array_of_string() raises:
-    # Heap-allocated elements: exercises move-init into uninitialized storage.
     var r = from_debug[InlineArray[String, 2]]('("a", "bb")')
     assert_equal(r[0], String("a"))
     assert_equal(r[1], String("bb"))
@@ -92,7 +87,6 @@ def test_set_of_string() raises:
 
 
 def test_set_dedups_on_deserialize() raises:
-    # Set semantics: repeated elements on the wire collapse to one.
     var r = from_debug[Set[Int]]("[1, 1, 2]")
     assert_equal(len(r), 2)
     assert_true(1 in r)

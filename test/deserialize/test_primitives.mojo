@@ -1,8 +1,3 @@
-# Deserialize each primitive from a hand-written debug-format literal and assert
-# equality. The deserialize-side counterpart of `test_primitives.mojo`. Inputs
-# are spelled out explicitly (not produced by the serializer) so a symmetric
-# encode/decode bug can't round-trip past the assertion undetected.
-
 from std.testing import assert_equal, TestSuite, assert_raises
 from _debug_format import from_debug
 from emberserde.deserialize import DeserializationError

@@ -1,10 +1,3 @@
-# Serialize through the non-self-describing token format (`_token_format.mojo`).
-# Each test pins the exact token stream a value produces, which is where the
-# three features a binary format leans on become observable: length prefixes
-# from `begin_seq`/`begin_map` size hints, `Optional` presence tags from
-# `serialize_some`, and structs/tuples writing no framing at all (field names
-# and arity are recovered from the type, never the wire).
-
 import emberserde
 from std.testing import assert_equal, TestSuite
 from _token_format import to_tokens

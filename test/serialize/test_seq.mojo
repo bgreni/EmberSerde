@@ -1,6 +1,3 @@
-# Serialize `List`/`InlineArray`/`Set` values (including nested and empty)
-# through the debug format.
-
 import emberserde
 from std.collections import Set
 from std.testing import assert_equal, TestSuite
@@ -42,13 +39,10 @@ def test_serialize_seq_empty() raises:
 
 
 def test_serialize_seq_of_string() raises:
-    # Heap-allocated elements: exercises the destructor on the cleanup path.
     var l: List[String] = ["a", "bb"]
     assert_equal(debug_string(l), '["a", "bb"]')
 
 
-# `InlineArray` is statically sized, so it serializes as a tuple (no length
-# token) and the debug format renders it with parens, not brackets.
 def test_inline_array_of_int() raises:
     var a: InlineArray[Int, 3] = [1, 2, 3]
     assert_equal(debug_string(a), "(1, 2, 3)")
@@ -83,13 +77,11 @@ def test_set_single_element() raises:
 
 
 def test_set_of_string() raises:
-    # Heap-allocated elements: exercises the destructor on the cleanup path.
     var s: Set[String] = {"a", "bb"}
     assert_equal(debug_string(s), '["a", "bb"]')
 
 
 def test_set_dedups() raises:
-    # Adding a duplicate is a no-op, so only the first insertion shows up.
     var s = Set[Int]()
     s.add(1)
     s.add(2)

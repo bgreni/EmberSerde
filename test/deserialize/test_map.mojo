@@ -1,7 +1,3 @@
-# Deserialize `Dict` from hand-written debug-format literals via the
-# `MapDerState` framing. The counterpart of `serialize/test_map.mojo`. Inputs
-# are spelled out explicitly rather than produced by the serializer.
-
 from std.testing import assert_equal, TestSuite
 from _debug_format import from_debug
 

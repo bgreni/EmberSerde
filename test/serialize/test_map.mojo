@@ -1,7 +1,3 @@
-# Serialize `Dict` through the debug format via the `MapSerState` framing.
-# Mojo's `Dict` preserves insertion order, so the rendered strings are
-# deterministic.
-
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string
 

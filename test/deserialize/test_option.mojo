@@ -1,7 +1,3 @@
-# Deserialize both arms of `Optional` from hand-written debug-format literals.
-# The counterpart of `test_option.mojo`. Inputs are spelled out explicitly
-# rather than produced by the serializer.
-
 from std.testing import assert_equal, assert_true, assert_false, TestSuite
 from _debug_format import from_debug
 

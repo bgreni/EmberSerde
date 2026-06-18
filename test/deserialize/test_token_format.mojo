@@ -1,10 +1,3 @@
-# Deserialize through the non-self-describing token format (`_token_format.mojo`).
-# Inputs are hand-written token streams (never produced by the serializer), so
-# the assertions pin how the reader recovers structure with no shape info on the
-# wire: sequence/map counts read up front, `Optional` presence tags consumed
-# before the payload, and struct field order served from `reflect[T]` rather
-# than the stream.
-
 from std.testing import (
     assert_equal,
     assert_true,

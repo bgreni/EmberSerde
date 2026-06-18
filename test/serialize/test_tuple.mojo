@@ -1,6 +1,3 @@
-# Serialize tuples through the debug format. Rust-`Debug` renders tuples as
-# `(a, b, c)`, exercising `begin_tuple` / `TupleSerState`.
-
 import emberserde
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string

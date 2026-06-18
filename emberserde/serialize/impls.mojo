@@ -20,9 +20,6 @@ __extension SIMD(Serializable):
         comptime if Self.size == 1:
             s.serialize_number(rebind[Scalar[Self.dtype]](self))
         else:
-            # Fixed-width homogeneous run: the lane count is a compile-time
-            # parameter, so it rides as a tuple (no length token on the wire),
-            # not a seq. See PLAN.md discussion of seq-vs-tuple.
             var tup = s.begin_tuple[Self.size]()
             for i in range(Self.size):
                 tup.serialize_element(self[i])
@@ -85,9 +82,6 @@ __extension Tuple(Serializable):
 
 __extension OwnedPointer(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        # Transparent, like serde's `Box<T>`: a boxed value serializes exactly
-        # as its pointee, with no wrapper framing. A self-referential structure
-        # would recurse forever here — the same cycle caveat serde carries.
         emberserde.serialize.serialize(self[], s)
 
 

@@ -1,6 +1,3 @@
-# Deserialize tuples through the debug format, exercising `begin_tuple` /
-# `TupleDerState` and the framework's `Tuple` `Deserializable` impl.
-
 import emberserde
 from std.testing import assert_equal, assert_true, assert_false, TestSuite
 from _debug_format import from_debug
@@ -36,8 +33,6 @@ def test_tuple_with_optional() raises:
 
 
 def test_heterogeneous_with_false() raises:
-    # Distinct values from `test_heterogeneous` (notably a `false` arm) so the
-    # `Bool` field isn't only ever exercised as `true`.
     var rebuilt = from_debug[Tuple[Int, String, Bool]]('(42, "ada", false)')
     assert_equal(rebuilt[0], 42)
     assert_equal(rebuilt[1], String("ada"))

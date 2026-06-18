@@ -1,9 +1,3 @@
-# Serialize both arms of `Optional` through the debug format.
-#
-# The framework's `Optional.serialize` impl routes a present value through
-# `serialize_some` (rendered Rust-`Debug`-style as `Some(v)`), and calls
-# `serialize_none` ("None") when empty.
-
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string
 

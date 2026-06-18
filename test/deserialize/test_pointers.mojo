@@ -1,19 +1,3 @@
-# Pointer types round-trip transparently. Because nothing frames the value on
-# the wire (a pointer serializes as its bare pointee), reconstruction is always
-# "deserialize the pointee, then wrap it":
-#
-#   * `OwnedPointer` (serde's `Box<T>`)   — box the deserialized value
-#   * `ArcPointer`   (serde's `Rc`/`Arc`) — wrap in a fresh allocation; the
-#       rebuilt pointer starts at refcount 1, so any aliasing that existed
-#       before serialization is gone (the wire never carried it)
-#
-# `Pointer` (a safe borrow) has no `Deserializable` counterpart — there is no
-# owned storage to point at — so it is serialize-only and absent here.
-#
-# Tests are grouped by behaviour, not by pointer type. `from_tokens` rebuilds
-# from a hand-written, shape-less token stream; `from_debug` round-trips
-# through the self-describing debug format.
-
 from std.memory import ArcPointer, OwnedPointer
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string, from_debug
@@ -31,7 +15,6 @@ struct Point(Copyable, Defaultable, Movable):
 
 
 def test_scalar_from_tokens() raises:
-    # No framing: a bare value token deserializes straight into the pointer.
     assert_equal(from_tokens[OwnedPointer[Int64]](["5"])[], Int64(5))
 
     var arc = from_tokens[ArcPointer[Int64]](["5"])

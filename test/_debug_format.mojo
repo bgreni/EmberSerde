@@ -93,7 +93,6 @@ struct DebugStruct[origin: MutOrigin](StructSerState):
         self.out[] += " }"
 
 
-# Rust-`Debug`-style tuples render as `(a, b, c)`.
 @fieldwise_init
 struct DebugTuple[origin: MutOrigin](TupleSerState):
     var out: Pointer[String, Self.origin]
@@ -178,8 +177,6 @@ struct DebugSerializer[origin: MutOrigin](Serializer):
         return DebugTuple(out=self.out, first=True)
 
 
-# Convenience: serialize `value` through a fresh `DebugSerializer` and return
-# the rendered string.
 def debug_string[T: AnyType, //](value: T) raises SerializationError -> String:
     var buf = String()
     var s = DebugSerializer(out=Pointer(to=buf))
@@ -480,7 +477,6 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
     # reflection-driven default on `Deserializer` drives the framing above.
 
 
-# Convenience: parse `s` through a fresh `DebugDeserializer` and build a `T`.
 def from_debug[T: AnyType](var s: String) raises DeserializationError -> T:
     var cursor = DebugCursor(s^, 0)
     var d = DebugDeserializer(cursor=Pointer(to=cursor))

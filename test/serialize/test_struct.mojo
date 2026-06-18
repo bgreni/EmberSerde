@@ -1,17 +1,3 @@
-# Struct serialization, across all three paths the framework offers:
-#
-#   * the reflection-driven default (`_default_serialize` walks `reflect[T]`
-#     fields) for a plain struct that doesn't implement `Serializable`;
-#   * that same default recursing through nested structs, lists of structs, and
-#     `Optional` fields;
-#   * a user-defined `Serializable` impl, which overrides the default — the
-#     `serialize` entry point dispatches to `value.serialize(...)` whenever `T`
-#     conforms to `Serializable`, otherwise it reflects over the fields.
-#
-# Struct names render module-qualified with this file's stem (`test_struct`),
-# so the expected strings carry that prefix. The non-self-describing wire form
-# of these same shapes lives in `test_token_format.mojo`.
-
 from std.testing import assert_equal, TestSuite
 from emberserde.serialize import Serializable, Serializer
 from emberserde.error import SerializationError
@@ -41,8 +27,6 @@ struct WithOpt(Copyable, Movable):
     var maybe: Optional[Int64]
 
 
-# Renders as a single tagged string instead of a `{ degrees: N }` struct, so a
-# custom impl is observably different from the reflection default.
 @fieldwise_init
 struct Celsius(Copyable, Movable, Serializable):
     var degrees: Int
@@ -52,8 +36,6 @@ struct Celsius(Copyable, Movable, Serializable):
 
 
 def test_reflection_default_renders_all_fields() raises:
-    # Every field, in declaration order, with `Name { f: v, ... }` framing. Two
-    # records pin both bool arms and exact comma/space placement.
     assert_equal(
         debug_string(Record(7, "ada", True)),
         'test_struct.Record { id: 7, name: "ada", active: true }',

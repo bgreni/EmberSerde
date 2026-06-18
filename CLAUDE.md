@@ -27,11 +27,17 @@ mojo run -D ASSERT=all -I . -I test test/serialize/test_primitives.mojo
 
 **Add coverage to the existing test file that already owns the topic — don't spin up a new `test_*.mojo` per type.** The files are organized by data-model category, not by type: collection types (`List`, `InlineArray`, `Set`, ...) go in `test_seq.mojo`, key/value types in `test_map.mojo`, etc. A new test file is only warranted when a genuinely new category appears that no existing file covers.
 
+Deserialize tests feed **hand-written wire literals** (not serializer output) so a symmetric encode/decode bug can't round-trip past the assertion — the literal pins the actual wire form on its own.
+
 ## Writing Mojo
 
 Always use the `mojo-syntax` skill when writing or editing Mojo. This codebase uses current/nightly Mojo syntax that differs from older conventions: `comptime` (not `alias`), typed raises (`raises SerializationError`), `reflect[T]`, `conforms_to`, `Some[Trait]` generic args, `trait_downcast_var`, `__extension`.
 
 **Mojo stdlib source is checked out locally at `~/Coding/mojo/mojo/stdlib/std/`** — read it directly when you need exact API signatures, trait conformances, or import paths (e.g. `OwnedPointer` lives in `memory/owned_pointer.mojo`, imported via `from std.memory import OwnedPointer`). It is more reliable than the IDE language server, which sometimes reports spurious "can't find a struct named ..." / "failed to resolve parent package" errors against perfectly valid stdlib imports; trust a `pixi run test`/build over those diagnostics.
+
+### Comments
+
+**Comment only to explain complex code or a non-obvious design decision — the *why*, never the *what*.** Do not add comments that restate what the code does, narrate a test's setup, or repeat trait/impl semantics documented elsewhere. Do not write file-header blocks summarizing what a test file covers — the filename and test names already do that. Prefer a clearer name over a comment. A good test of a comment: if deleting it loses no information a reader couldn't get from the code itself, delete it. Leave commented-out code alone — managing it is the user's call, not yours.
 
 ## Architecture
 

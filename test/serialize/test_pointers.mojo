@@ -1,16 +1,3 @@
-# Pointer types serialize *transparently*: as their bare pointee, with no
-# wrapper framing. This holds for every pointer the framework supports, each
-# modelled on a serde counterpart:
-#
-#   * `OwnedPointer` (serde's `Box<T>`)   — sole owner of a heap value
-#   * `ArcPointer`   (serde's `Rc`/`Arc`) — shared, refcounted
-#   * `Pointer`      (a safe borrow)      — serialize-only (see below)
-#
-# Because nothing frames the value, the debug rendering and the token stream of
-# any pointer are byte-for-byte identical to the bare pointee's. The tests are
-# grouped by the *behaviour* under test, not by pointer type, so each behaviour
-# is asserted across every pointer that exhibits it.
-
 from std.memory import ArcPointer, OwnedPointer
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string
@@ -28,7 +15,6 @@ struct Point(Copyable, Defaultable, Movable):
 
 
 def test_scalar_is_transparent() raises:
-    # A scalar behind any pointer renders exactly as the bare value would.
     assert_equal(debug_string(OwnedPointer(Int64(5))), "5")
     assert_equal(debug_string(ArcPointer(Int64(5))), "5")
     var v = Int64(5)
@@ -39,7 +25,6 @@ def test_scalar_is_transparent() raises:
 
 
 def test_struct_is_transparent() raises:
-    # A struct behind any pointer renders with no wrapper framing.
     assert_equal(
         debug_string(OwnedPointer(Point(1, 2))),
         "test_pointers.Point { x: 1, y: 2 }",
@@ -55,8 +40,6 @@ def test_struct_is_transparent() raises:
 
 
 def test_token_stream_has_no_framing() raises:
-    # The token stream carries no shape info, so a pointer's stream must match
-    # the bare pointee's exactly.
     assert_equal(to_tokens(OwnedPointer(Int64(7))), to_tokens(Int64(7)))
     assert_equal(to_tokens(ArcPointer(Int64(7))), to_tokens(Int64(7)))
     var p = Point(3, 4)

@@ -171,7 +171,6 @@ struct TokenSerializer[origin: MutOrigin](Serializer):
         return TokenTupleSer(out=self.out)
 
 
-# Convenience: serialize `value` and return the raw token stream.
 def to_tokens[
     T: AnyType, //
 ](value: T) raises SerializationError -> List[String]:
@@ -376,7 +375,6 @@ struct TokenDeserializer[origin: MutOrigin](Deserializer):
         return TokenTupleDe(cursor=self.cursor)
 
 
-# Convenience: parse a token stream back into a `T`.
 def from_tokens[
     T: AnyType
 ](var tokens: List[String]) raises DeserializationError -> T:
