@@ -3,6 +3,9 @@ from std.reflection import reflect
 
 from .impls import *
 from emberserde.error import DeserializationError, DerErrorKind
+from emberserde.field_meta import FieldMeta, name_matches
+from emberserde.struct_modifiers import RenameAll, DenyUnknownFields
+from emberserde.utils import Base
 
 
 def _all_dtors_are_trivial[T: AnyType]() -> Bool:
@@ -19,6 +22,17 @@ def _all_dtors_are_trivial[T: AnyType]() -> Bool:
 # `MissingField`.
 def __is_optional[T: AnyType]() -> Bool:
     return reflect[T].base_name() == "Optional"
+
+
+# May field `i` be absent from the wire? `Optional` always; a `Field` when it is
+# skipped or carries a default. Everything else is required.
+def _fill_if_missing[FT: AnyType]() -> Bool:
+    comptime if __is_optional[FT]():
+        return True
+    elif conforms_to(FT, FieldMeta):
+        return downcast[FT, FieldMeta].serde_fill_if_missing
+    else:
+        return False
 
 
 trait Deserializable(Movable):
@@ -156,7 +170,9 @@ trait Deserializer:
 
             var matched = False
             comptime for i in range(r.field_count()):
-                if not matched and name == names[i]:
+                if not matched and name_matches[T, r.field_types()[i]](
+                    names[i], name
+                ):
                     if seen[i]:
                         raise DeserializationError(
                             String(t"duplicate field: {names[i]}"),
@@ -164,21 +180,25 @@ trait Deserializer:
                         )
                     seen[i] = True
                     matched = True
-                    comptime FT = downcast[
-                        r.field_types()[i], Movable & ImplicitlyDeletable
-                    ]
-                    trait_downcast[Movable & ImplicitlyDeletable](
+                    comptime FT = downcast[r.field_types()[i], Base]
+                    trait_downcast[Base](
                         r.field_ref[i](result)
                     ) = st.expect_field_value[FT]()
             if not matched:
-                st.skip_value()
+                comptime if conforms_to(T, DenyUnknownFields):
+                    raise DeserializationError(
+                        String(t"Unknown field: {name}"),
+                        DerErrorKind.UnknownField,
+                    )
+                else:
+                    st.skip_value()
 
         comptime for i in range(r.field_count()):
             if not seen[i]:
-                comptime if __is_optional[r.field_types()[i]]():
-                    ref f = trait_downcast[
-                        Movable & ImplicitlyDeletable & Defaultable
-                    ](r.field_ref[i](result))
+                comptime if _fill_if_missing[r.field_types()[i]]():
+                    ref f = trait_downcast[Base & Defaultable](
+                        r.field_ref[i](result)
+                    )
                     f = type_of(f)()
                 else:
                     raise DeserializationError(

@@ -5,6 +5,7 @@ from std.memory import OwnedPointer, ArcPointer
 from std.os import abort
 from emberserde.deserialize import Deserializer
 from emberserde.error import DeserializationError, DerErrorKind
+from emberserde.utils import Base
 
 
 # Drop helper for retiring a partially-built collection on an error-unwind path.
@@ -162,12 +163,8 @@ __extension Tuple(Deserializable):
         var result = Self()
 
         comptime for i in range(Self.__len__()):
-            comptime ET = downcast[
-                Self.element_types[i], Movable & ImplicitlyDeletable
-            ]
-            trait_downcast[Movable & ImplicitlyDeletable](
-                result[i]
-            ) = state.expect_element[ET]()
+            comptime ET = downcast[Self.element_types[i], Base]
+            trait_downcast[Base](result[i]) = state.expect_element[ET]()
 
         state.end()
 

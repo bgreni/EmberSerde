@@ -1,11 +1,12 @@
 import emberserde
-from emberserde.utils import unimplemented
+from emberserde.utils import unimplemented, Base
 from std.reflection import (
     reflect,
 )
 
 from .impls import *
 from emberserde.error import SerializationError
+from emberserde.field_meta import wire_name, visible_fields, is_skipped
 
 
 trait Serializable:
@@ -117,9 +118,7 @@ trait Serializer:
 
         # st.end()
 
-        comptime assert conforms_to(
-            Seq.IteratorType[origin_of(v)], ImplicitlyDeletable & Movable
-        ), (
+        comptime assert conforms_to(Seq.IteratorType[origin_of(v)], Base), (
             "Cannot serialize sequence with non-movable or non-implicitly"
             " deletable element type"
         )
@@ -138,9 +137,7 @@ trait Serializer:
                 element = it.__next__()
             except e:
                 break
-            st.serialize_element(
-                trait_downcast_var[ImplicitlyDeletable & Movable](element^)
-            )
+            st.serialize_element(trait_downcast_var[Base](element^))
         st.end()
 
     def serialize_struct[T: AnyType](mut self, v: T) raises SerializationError:
@@ -150,10 +147,18 @@ trait Serializer:
         comptime field_count = r.field_count()
         comptime field_names = r.field_names()
 
-        var state = self.begin_struct[r.name()](field_count)
+        # `Field`-wrapped members may rename themselves or drop out entirely
+        # (`skip`), so the emitted count can be smaller than the struct's.
+        comptime visible = visible_fields[T]()
+
+        var state = self.begin_struct[r.name()](visible)
 
         comptime for i in range(field_count):
-            state.serialize_field(field_names[i], r.field_ref[i](v))
+            comptime FT = r.field_types()[i]
+            comptime if not is_skipped[FT]():
+                state.serialize_field(
+                    wire_name[T, FT](field_names[i]), r.field_ref[i](v)
+                )
 
         state.end()
 
