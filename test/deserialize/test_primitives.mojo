@@ -1,3 +1,5 @@
+from std.collections.string import Codepoint
+from std.complex import ComplexSIMD
 from std.testing import assert_equal, TestSuite, assert_raises
 from _debug_format import from_debug
 from emberserde.deserialize import DeserializationError
@@ -42,6 +44,32 @@ def test_simd() raises:
 def test_string() raises:
     assert_equal(from_debug[String]('"hello"'), String("hello"))
     assert_equal(from_debug[String]('""'), String(""))
+
+
+def test_codepoint() raises:
+    assert_equal(from_debug[Codepoint]("97").to_u32(), 97)
+    assert_equal(from_debug[Codepoint]("8364").to_u32(), 8364)
+
+
+# A `u32` outside the valid Unicode scalar range fails `from_u32`, which the
+# impl surfaces as a raise rather than a silent default.
+def test_codepoint_out_of_range() raises:
+    with assert_raises():
+        _ = from_debug[Codepoint]("1114112")  # 0x110000, just past the max
+
+
+def test_complex_scalar() raises:
+    var r = from_debug[ComplexSIMD[DType.float64, 1]]("(1.5, -2.25)")
+    assert_equal(r.re, Float64(1.5))
+    assert_equal(r.im, Float64(-2.25))
+
+
+# Lanes are interleaved `(re, im)` pairs on the wire, so `(1, 3)`/`(2, 4)`
+# deserialize to `re = (1, 2)`, `im = (3, 4)`.
+def test_complex_vector() raises:
+    var r = from_debug[ComplexSIMD[DType.int32, 2]]("((1, 3), (2, 4))")
+    assert_equal(r.re, SIMD[DType.int32, 2](1, 2))
+    assert_equal(r.im, SIMD[DType.int32, 2](3, 4))
 
 
 struct Foo(Copyable, Defaultable):

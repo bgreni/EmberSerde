@@ -1,4 +1,4 @@
-from std.collections import Set
+from std.collections import Set, Deque, LinkedList
 from std.testing import assert_equal, assert_true, assert_false, TestSuite
 from _debug_format import from_debug
 
@@ -91,6 +91,46 @@ def test_set_dedups_on_deserialize() raises:
     assert_equal(len(r), 2)
     assert_true(1 in r)
     assert_true(2 in r)
+
+
+def test_deque_of_int() raises:
+    var r = from_debug[Deque[Int]]("[1, 2, 3]")
+    assert_equal(len(r), 3)
+    assert_equal(r[0], 1)
+    assert_equal(r[1], 2)
+    assert_equal(r[2], 3)
+
+
+def test_deque_empty() raises:
+    var r = from_debug[Deque[Int]]("[]")
+    assert_equal(len(r), 0)
+
+
+def test_deque_of_string() raises:
+    var r = from_debug[Deque[String]]('["a", "bb"]')
+    assert_equal(len(r), 2)
+    assert_equal(r[0], String("a"))
+    assert_equal(r[1], String("bb"))
+
+
+def test_linked_list_of_int() raises:
+    var r = from_debug[LinkedList[Int]]("[1, 2, 3]")
+    assert_equal(len(r), 3)
+    assert_equal(r.get_nth(0), 1)
+    assert_equal(r.get_nth(1), 2)
+    assert_equal(r.get_nth(2), 3)
+
+
+def test_linked_list_empty() raises:
+    var r = from_debug[LinkedList[Int]]("[]")
+    assert_equal(len(r), 0)
+
+
+def test_linked_list_of_string() raises:
+    var r = from_debug[LinkedList[String]]('["a", "bb"]')
+    assert_equal(len(r), 2)
+    assert_equal(r.get_nth(0), String("a"))
+    assert_equal(r.get_nth(1), String("bb"))
 
 
 def main() raises:

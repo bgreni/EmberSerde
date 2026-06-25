@@ -1,6 +1,8 @@
 import emberserde
 from std.builtin.rebind import downcast, rebind_var
-from std.collections import Set
+from std.collections import Set, Deque, LinkedList, Counter
+from std.collections.string import Codepoint
+from std.complex import ComplexSIMD
 from std.memory import OwnedPointer, ArcPointer
 from std.os import abort
 from emberserde.deserialize import Deserializer
@@ -88,6 +90,44 @@ __extension Optional(Deserializable):
         return d.expect_optional[Self.T]()
 
 
+__extension Codepoint(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        var cp = Codepoint.from_u32(d.expect_number[DType.uint32]())
+        if not cp:
+            raise DeserializationError(
+                "not a valid Unicode scalar value",
+                DerErrorKind.InvalidValue,
+            )
+        return cp.value()
+
+
+__extension ComplexSIMD(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        comptime if Self.size == 1:
+            var tup = d.begin_tuple[2]()
+            var re = tup.expect_element[Scalar[Self.dtype]]()
+            var im = tup.expect_element[Scalar[Self.dtype]]()
+            tup.end()
+            return Self(re, im)
+        else:
+            comptime Pair = Tuple[Scalar[Self.dtype], Scalar[Self.dtype]]
+            var re = Self.element_type(0)
+            var im = Self.element_type(0)
+            var tup = d.begin_tuple[Self.size]()
+            for i in range(Self.size):
+                var pair = tup.expect_element[Pair]()
+                re[i] = pair[0]
+                im[i] = pair[1]
+            tup.end()
+            return Self(re, im)
+
+
 __extension List(Deserializable):
     @staticmethod
     def deserialize(
@@ -136,6 +176,46 @@ __extension Set(Deserializable):
         while seq.has_next():
             result.add(seq.expect_element[Self.T]())
         seq.end()
+        return result^
+
+
+__extension Deque(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        var result = Self()
+        var seq = d.begin_seq()
+        while seq.has_next():
+            result.append(seq.expect_element[Self.ElementType]())
+        seq.end()
+        return result^
+
+
+__extension LinkedList(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        var result = Self()
+        var seq = d.begin_seq()
+        while seq.has_next():
+            result.append(seq.expect_element[Self.ElementType]())
+        seq.end()
+        return result^
+
+
+__extension Counter(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        var result = Self()
+        var m = d.begin_map()
+        while m.has_next():
+            var k = m.expect_key[Self.V]()
+            result[k^] = m.expect_value[Int]()
+        m.end()
         return result^
 
 
@@ -188,10 +268,4 @@ __extension ArcPointer(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        # Transparent inverse of the serialize impl: deserialize the pointee
-        # and wrap it in a fresh allocation. Sharing is NOT reconstructed —
-        # values that aliased one `ArcPointer` on the way out come back as
-        # independent allocations, since the wire never carried the aliasing
-        # (same as serde's `Rc`/`Arc`). `ArcPointer`'s own `T` is already
-        # `Movable & ImplicitlyDeletable`, so no downcast is needed here.
         return Self(emberserde.deserialize.deserialize[Self.T](d))

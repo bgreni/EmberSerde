@@ -1,3 +1,5 @@
+from std.collections.string import Codepoint
+from std.complex import ComplexSIMD
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string
 
@@ -39,6 +41,41 @@ def test_simd() raises:
 def test_string() raises:
     assert_equal(debug_string(String("hello")), '"hello"')
     assert_equal(debug_string(String("")), '""')
+
+
+# Non-owning string views route through `serialize_string`, so they render
+# identically to a `String`. Serialize-only: there is nothing to borrow from
+# on the way back, same precedent as `Pointer`.
+def test_string_slice() raises:
+    var s = String("hello")
+    assert_equal(debug_string(StringSlice(s)), '"hello"')
+
+
+def test_static_string() raises:
+    assert_equal(debug_string(StaticString("hi")), '"hi"')
+
+
+# A `Codepoint` rides the wire as its `u32` scalar value.
+def test_codepoint() raises:
+    assert_equal(debug_string(Codepoint.ord("a")), "97")
+    assert_equal(debug_string(Codepoint.ord("€")), "8364")
+
+
+# `ComplexSIMD` rides the wire as a 2-element `(re, im)` tuple. A scalar
+# (`size == 1`) renders each part as a number.
+def test_complex_scalar() raises:
+    assert_equal(
+        debug_string(ComplexSIMD[DType.float64, 1](1.5, -2.25)), "(1.5, -2.25)"
+    )
+
+
+# A vector `ComplexSIMD` (`size > 1`) renders one `(re, im)` pair per lane,
+# interleaved — not the `re`/`im` SIMD split.
+def test_complex_vector() raises:
+    var c = ComplexSIMD[DType.int32, 2](
+        SIMD[DType.int32, 2](1, 2), SIMD[DType.int32, 2](3, 4)
+    )
+    assert_equal(debug_string(c), "((1, 3), (2, 4))")
 
 
 # A literal-typed field stays `IntLiteral`/`FloatLiteral` (it does not

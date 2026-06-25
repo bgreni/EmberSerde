@@ -1,5 +1,5 @@
 import emberserde
-from std.collections import Set
+from std.collections import Set, Deque, LinkedList
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string, DebugSerializer
 
@@ -87,6 +87,60 @@ def test_set_dedups() raises:
     s.add(2)
     s.add(1)
     assert_equal(debug_string(s), "[1, 2]")
+
+
+# `Deque`/`LinkedList` ride the wire as seqs, same framing as `List`.
+def test_deque_of_int() raises:
+    var d = Deque[Int](1, 2, 3)
+    assert_equal(debug_string(d), "[1, 2, 3]")
+
+
+def test_deque_empty() raises:
+    var d = Deque[Int]()
+    assert_equal(debug_string(d), "[]")
+
+
+def test_deque_of_string() raises:
+    var d = Deque[String]("a", "bb")
+    assert_equal(debug_string(d), '["a", "bb"]')
+
+
+def test_linked_list_of_int() raises:
+    var l = LinkedList[Int](1, 2, 3)
+    assert_equal(debug_string(l), "[1, 2, 3]")
+
+
+def test_linked_list_empty() raises:
+    var l = LinkedList[Int]()
+    assert_equal(debug_string(l), "[]")
+
+
+def test_linked_list_of_string() raises:
+    var l = LinkedList[String]("a", "bb")
+    assert_equal(debug_string(l), '["a", "bb"]')
+
+
+# A non-byte `Span` rides the wire as a seq.
+def test_span_of_int() raises:
+    var l: List[Int] = [1, 2, 3]
+    assert_equal(debug_string(Span(l)), "[1, 2, 3]")
+
+
+def test_span_empty() raises:
+    var l = List[Int]()
+    assert_equal(debug_string(Span(l)), "[]")
+
+
+# A `Span[Byte]` routes through `serialize_bytes`, which the debug format
+# renders with the `b[...]` framing.
+def test_span_of_bytes() raises:
+    var l: List[Byte] = [1, 2, 255]
+    assert_equal(debug_string(Span(l)), "b[1, 2, 255]")
+
+
+def test_span_of_bytes_empty() raises:
+    var l = List[Byte]()
+    assert_equal(debug_string(Span(l)), "b[]")
 
 
 def main() raises:
