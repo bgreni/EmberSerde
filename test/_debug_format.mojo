@@ -18,6 +18,7 @@ from emberserde.serialize import (
     MapSerState,
     StructSerState,
     TupleSerState,
+    EnumSerState,
     serialize,
 )
 from emberserde.deserialize import (
@@ -27,6 +28,7 @@ from emberserde.deserialize import (
     MapDerState,
     StructDerState,
     TupleDerState,
+    EnumDerState,
     deserialize,
 )
 from emberserde.error import (
@@ -110,6 +112,18 @@ struct DebugTuple[origin: MutOrigin](TupleSerState):
 
 
 @fieldwise_init
+struct DebugEnum[origin: MutOrigin](EnumSerState):
+    var out: Pointer[String, Self.origin]
+
+    def serialize_payload(mut self, v: Some[AnyType]) raises SerializationError:
+        var sub = DebugSerializer(out=self.out)
+        serialize(v, sub)
+
+    def end(mut self) raises SerializationError:
+        self.out[] += ")"
+
+
+@fieldwise_init
 struct DebugSerializer[origin: MutOrigin](Serializer):
     var out: Pointer[String, Self.origin]
 
@@ -117,6 +131,7 @@ struct DebugSerializer[origin: MutOrigin](Serializer):
     comptime SeqType = DebugSeq[Self.origin]
     comptime StructType = DebugStruct[Self.origin]
     comptime TupleType = DebugTuple[Self.origin]
+    comptime EnumType = DebugEnum[Self.origin]
 
     def serialize_bool(mut self, v: Bool) raises SerializationError:
         self.out[] += "true" if v else "false"
@@ -175,6 +190,15 @@ struct DebugSerializer[origin: MutOrigin](Serializer):
     ](mut self) raises SerializationError -> Self.TupleType:
         self.out[] += "("
         return DebugTuple(out=self.out, first=True)
+
+    # Rust-`Debug`-style: render the active arm as `ArmName(payload)`, mirroring
+    # how a present `Optional` renders as `Some(payload)`.
+    def begin_enum[
+        name: String, variant: String
+    ](mut self, idx: UInt32) raises SerializationError -> Self.EnumType:
+        self.out[] += variant
+        self.out[] += "("
+        return DebugEnum(out=self.out)
 
 
 def debug_string[T: AnyType, //](value: T) raises SerializationError -> String:
@@ -393,6 +417,23 @@ struct DebugTupleDe[origin: MutOrigin](TupleDerState):
 
 
 @fieldwise_init
+struct DebugEnumDe[origin: MutOrigin](EnumDerState):
+    var cursor: Pointer[DebugCursor, Self.origin]
+    var idx: Int
+
+    def variant_index(mut self) raises DeserializationError -> Int:
+        return self.idx
+
+    def expect_payload[T: AnyType](mut self) raises DeserializationError -> T:
+        var sub = DebugDeserializer(cursor=self.cursor)
+        return deserialize[T](sub)
+
+    def end(mut self) raises DeserializationError:
+        self.cursor[].skip_ws()
+        self.cursor[].expect_lit(")")
+
+
+@fieldwise_init
 struct DebugDeserializer[origin: MutOrigin](Deserializer):
     var cursor: Pointer[DebugCursor, Self.origin]
 
@@ -400,6 +441,7 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
     comptime MapType = DebugMapDe[Self.origin]
     comptime StructType = DebugStructDe[Self.origin]
     comptime TupleType = DebugTupleDe[Self.origin]
+    comptime EnumType = DebugEnumDe[Self.origin]
 
     def expect_bool(mut self) raises DeserializationError -> Bool:
         self.cursor[].skip_ws()
@@ -472,6 +514,27 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         self.cursor[].skip_ws()
         self.cursor[].expect_lit("(")
         return DebugTupleDe(cursor=self.cursor, first=True)
+
+    # Reads the arm-name tag up to the opening `(`, resolves it to an arm index
+    # via `arm_names`; the matching `)` is `end`'s job. Only called for
+    # `Variant` targets, so no ambiguity with tuples/structs.
+    def begin_enum[
+        T: AnyType
+    ](
+        mut self, arm_names: List[String]
+    ) raises DeserializationError -> Self.EnumType:
+        self.cursor[].skip_ws()
+        var start = self.cursor[].pos
+        while not self.cursor[].at_end() and self.cursor[].peek() != ord("("):
+            self.cursor[].advance()
+        var name = self.cursor[]._slice(start, self.cursor[].pos)
+        self.cursor[].expect_lit("(")
+        var idx = -1
+        for i in range(len(arm_names)):
+            if arm_names[i] == name:
+                idx = i
+                break
+        return DebugEnumDe(cursor=self.cursor, idx=idx)
 
     # `expect_struct` is intentionally NOT implemented here: the framework's
     # reflection-driven default on `Deserializer` drives the framing above.

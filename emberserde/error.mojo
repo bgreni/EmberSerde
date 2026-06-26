@@ -21,7 +21,8 @@ struct DerErrorKind(ImplicitlyCopyable, Writable):
     comptime MissingField = Self(2)
     comptime DuplicateField = Self(3)
     comptime UnknownField = Self(4)
-    comptime Custom = Self(5)
+    comptime UnknownVariant = Self(5)
+    comptime Custom = Self(6)
 
 
 @fieldwise_init

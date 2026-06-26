@@ -99,11 +99,28 @@ trait StructDerState(ImplicitlyDeletable):
         ...
 
 
+trait EnumDerState(ImplicitlyDeletable):
+    # The resolved arm index (position in the variant's arm list). `begin_enum`
+    # has already consumed the wire tag and mapped it to an index — self-
+    # describing formats look the arm name up in the supplied arm names; binary
+    # formats read a discriminant index directly. A value outside the arm range
+    # signals an unknown variant, which the `Variant` impl turns into an error.
+    def variant_index(mut self) raises DeserializationError -> Int:
+        ...
+
+    def expect_payload[T: AnyType](mut self) raises DeserializationError -> T:
+        ...
+
+    def end(mut self) raises DeserializationError:
+        ...
+
+
 trait Deserializer:
     comptime SeqType: SeqDerState
     comptime MapType: MapDerState
     comptime StructType: StructDerState
     comptime TupleType: TupleDerState
+    comptime EnumType: EnumDerState
 
     def expect_bool(mut self) raises DeserializationError -> Bool:
         ...
@@ -135,6 +152,17 @@ trait Deserializer:
     def begin_tuple[
         field_count: Int
     ](mut self) raises DeserializationError -> Self.TupleType:
+        ...
+
+    # Externally-tagged sum type. `arm_names` are the variant's arm type names
+    # in declaration order (the impl supplies them since `reflect` cannot
+    # enumerate variant arms); the format maps the wire tag to a position in
+    # this list, surfaced via `EnumDerState.variant_index`.
+    def begin_enum[
+        T: AnyType
+    ](
+        mut self, arm_names: List[String]
+    ) raises DeserializationError -> Self.EnumType:
         ...
 
     # TODO: Have an `expect_seq` like we do in `Serializer`.

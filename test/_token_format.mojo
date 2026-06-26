@@ -24,6 +24,7 @@ from emberserde.serialize import (
     MapSerState,
     StructSerState,
     TupleSerState,
+    EnumSerState,
     serialize,
 )
 from emberserde.deserialize import (
@@ -32,6 +33,7 @@ from emberserde.deserialize import (
     MapDerState,
     StructDerState,
     TupleDerState,
+    EnumDerState,
     deserialize,
 )
 from emberserde.error import (
@@ -105,6 +107,20 @@ struct TokenTupleSer[origin: MutOrigin](TupleSerState):
         pass
 
 
+# The discriminant index is written as a token (the arm name is never written),
+# then the payload follows — exactly what a bincode-shaped format does.
+@fieldwise_init
+struct TokenEnumSer[origin: MutOrigin](EnumSerState):
+    var out: Pointer[List[String], Self.origin]
+
+    def serialize_payload(mut self, v: Some[AnyType]) raises SerializationError:
+        var sub = TokenSerializer(out=self.out)
+        serialize(v, sub)
+
+    def end(mut self) raises SerializationError:
+        pass
+
+
 @fieldwise_init
 struct TokenSerializer[origin: MutOrigin](Serializer):
     var out: Pointer[List[String], Self.origin]
@@ -113,6 +129,7 @@ struct TokenSerializer[origin: MutOrigin](Serializer):
     comptime SeqType = TokenSeqSer[Self.origin]
     comptime StructType = TokenStructSer[Self.origin]
     comptime TupleType = TokenTupleSer[Self.origin]
+    comptime EnumType = TokenEnumSer[Self.origin]
 
     def serialize_bool(mut self, v: Bool) raises SerializationError:
         self.out[].append("true" if v else "false")
@@ -169,6 +186,13 @@ struct TokenSerializer[origin: MutOrigin](Serializer):
     ](mut self) raises SerializationError -> Self.TupleType:
         # Nothing on the wire: the arity is comptime-known on both ends.
         return TokenTupleSer(out=self.out)
+
+    def begin_enum[
+        name: String, variant: String
+    ](mut self, idx: UInt32) raises SerializationError -> Self.EnumType:
+        # Binary-shaped: write the discriminant index, not the arm name.
+        self.out[].append(String(idx))
+        return TokenEnumSer(out=self.out)
 
 
 def to_tokens[
@@ -296,6 +320,22 @@ struct TokenTupleDe[origin: MutOrigin](TupleDerState):
 
 
 @fieldwise_init
+struct TokenEnumDe[origin: MutOrigin](EnumDerState):
+    var cursor: Pointer[TokenCursor, Self.origin]
+    var idx: Int
+
+    def variant_index(mut self) raises DeserializationError -> Int:
+        return self.idx
+
+    def expect_payload[T: AnyType](mut self) raises DeserializationError -> T:
+        var sub = TokenDeserializer(cursor=self.cursor)
+        return deserialize[T](sub)
+
+    def end(mut self) raises DeserializationError:
+        pass
+
+
+@fieldwise_init
 struct TokenDeserializer[origin: MutOrigin](Deserializer):
     var cursor: Pointer[TokenCursor, Self.origin]
 
@@ -303,6 +343,7 @@ struct TokenDeserializer[origin: MutOrigin](Deserializer):
     comptime MapType = TokenMapDe[Self.origin]
     comptime StructType = TokenStructDe[Self.origin]
     comptime TupleType = TokenTupleDe[Self.origin]
+    comptime EnumType = TokenEnumDe[Self.origin]
 
     def expect_bool(mut self) raises DeserializationError -> Bool:
         var tok = self.cursor[].next_token()
@@ -373,6 +414,15 @@ struct TokenDeserializer[origin: MutOrigin](Deserializer):
     ](mut self) raises DeserializationError -> Self.TupleType:
         # Nothing on the wire: the arity is comptime-known on both ends.
         return TokenTupleDe(cursor=self.cursor)
+
+    def begin_enum[
+        T: AnyType
+    ](
+        mut self, arm_names: List[String]
+    ) raises DeserializationError -> Self.EnumType:
+        # Binary-shaped: the discriminant index is read straight off the wire;
+        # `arm_names` is unused because the wire carries no name to resolve.
+        return TokenEnumDe(cursor=self.cursor, idx=self.cursor[].next_count())
 
 
 def from_tokens[

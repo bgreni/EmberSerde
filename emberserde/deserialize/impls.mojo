@@ -5,6 +5,8 @@ from std.collections.string import Codepoint
 from std.complex import ComplexSIMD
 from std.memory import OwnedPointer, ArcPointer
 from std.os import abort
+from std.reflection import reflect
+from std.utils import Variant
 from emberserde.deserialize import Deserializer
 from emberserde.error import DeserializationError, DerErrorKind
 from emberserde.utils import Base
@@ -88,6 +90,29 @@ __extension Optional(Deserializable):
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
         return d.expect_optional[Self.T]()
+
+
+__extension Variant(Deserializable):
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        var arm_names = List[String]()
+        comptime for i in range(Self.Ts.size):
+            arm_names.append(String(reflect[Self.Ts[i]].name()))
+
+        var st = d.begin_enum[Self](arm_names^)
+        var idx = st.variant_index()
+        comptime for i in range(Self.Ts.size):
+            comptime AT = downcast[Self.Ts[i], Base]
+            if idx == i:
+                var payload = st.expect_payload[AT]()
+                st.end()
+                return Self(payload^)
+        raise DeserializationError(
+            String(t"unknown variant index: {idx}"),
+            DerErrorKind.UnknownVariant,
+        )
 
 
 __extension Codepoint(Deserializable):

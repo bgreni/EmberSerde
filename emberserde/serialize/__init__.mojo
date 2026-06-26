@@ -52,11 +52,23 @@ trait TupleSerState(ImplicitlyDeletable):
         ...
 
 
+trait EnumSerState(ImplicitlyDeletable):
+    # Called exactly once with the active arm's value. The payload's shape
+    # (primitive/struct/tuple) falls out of normal serialization — no per-shape
+    # methods are needed on the format.
+    def serialize_payload(mut self, v: Some[AnyType]) raises SerializationError:
+        ...
+
+    def end(mut self) raises SerializationError:
+        ...
+
+
 trait Serializer:
     comptime MapType: MapSerState
     comptime SeqType: SeqSerState
     comptime StructType: StructSerState
     comptime TupleType: TupleSerState
+    comptime EnumType: EnumSerState
 
     def serialize_bool(mut self, v: Bool) raises SerializationError:
         unimplemented()
@@ -105,6 +117,15 @@ trait Serializer:
     def begin_tuple[
         field_count: Int
     ](mut self) raises SerializationError -> Self.TupleType:
+        ...
+
+    # Externally-tagged sum type. `name` is the enum type's name; `variant` is
+    # the active arm's type name (the tag); `idx` is the arm's position (the
+    # discriminant a binary format would write). Self-describing formats key on
+    # `variant`; non-self-describing formats key on `idx`.
+    def begin_enum[
+        name: String, variant: String
+    ](mut self, idx: UInt32) raises SerializationError -> Self.EnumType:
         ...
 
     def serialize_seq[

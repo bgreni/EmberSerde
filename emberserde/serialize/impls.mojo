@@ -3,7 +3,9 @@ from std.collections import Set, Deque, LinkedList, Counter
 from std.collections.string import Codepoint
 from std.complex import ComplexSIMD
 from std.memory import OwnedPointer, ArcPointer
+from std.reflection import reflect
 from std.sys.intrinsics import _type_is_eq
+from std.utils import Variant
 from emberserde.serialize import Serializer
 from emberserde.error import SerializationError
 
@@ -45,6 +47,23 @@ __extension Optional(Serializable):
             s.serialize_some(self.value())
         else:
             s.serialize_none()
+
+
+# Externally tagged: the active arm's type name is the tag, the arm's value the
+# payload. `Self.Ts` (the variant's arm-type pack) is what makes this work —
+# `reflect` can't enumerate variant arms, but the pack can.
+__extension Variant(Serializable):
+    def serialize(self, mut s: Some[Serializer]) raises SerializationError:
+        comptime for i in range(Self.Ts.size):
+            comptime AT = Self.Ts[i]
+            if self.isa[AT]():
+                var st = s.begin_enum[reflect[Self].name(), reflect[AT].name()](
+                    UInt32(i)
+                )
+                st.serialize_payload(self.unsafe_get[AT]())
+                st.end()
+                return
+
 
 __extension Codepoint(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
