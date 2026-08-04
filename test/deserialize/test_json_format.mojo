@@ -214,5 +214,14 @@ def test_type_mismatch_kind() raises:
     assert_equal(kind._kind, DerErrorKind.TypeMismatch._kind)
 
 
+def test_invalid_number_kind() raises:
+    var kind = DerErrorKind.Custom
+    try:
+        _ = from_json[Int]("1.2.3")
+    except e:
+        kind = e.kind
+    assert_equal(kind._kind, DerErrorKind.InvalidValue._kind)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

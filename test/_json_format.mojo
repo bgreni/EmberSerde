@@ -523,7 +523,7 @@ struct JsonDeserializer[origin: MutOrigin](Deserializer):
             else:
                 return Scalar[DT](atol(tok))
         except e:
-            raise _mismatch(String("invalid number: '") + tok + "'")
+            raise _invalid(String("invalid number: '") + tok + "'")
 
     def expect_string(mut self) raises DeserializationError -> String:
         self.cursor[].skip_ws()
