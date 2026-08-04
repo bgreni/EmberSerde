@@ -14,10 +14,13 @@
 # their quotes on read, serde_json-style. It follows the same pointer-handle
 # pattern as the other two formats.
 
+from std.builtin.rebind import rebind_var
 from std.reflection import reflect
+from std.utils import Variant
 
 from emberserde.serialize import (
     Serializer,
+    Serializable,
     SeqSerState,
     MapSerState,
     StructSerState,
@@ -27,6 +30,8 @@ from emberserde.serialize import (
 )
 from emberserde.deserialize import (
     Deserializer,
+    Deserializable,
+    SelfDescribingDeserializer,
     SeqDerState,
     MapDerState,
     StructDerState,
@@ -230,6 +235,143 @@ def to_json[T: AnyType, //](value: T) raises SerializationError -> String:
     var s = JsonSerializer(out=Pointer(to=buf))
     serialize(value, s)
     return buf^
+
+
+struct JsonNull(Copyable, Movable):
+    def __init__(out self):
+        pass
+
+
+@fieldwise_init
+struct JsonArray(Copyable, Movable):
+    var values: List[JsonValue]
+
+
+@fieldwise_init
+struct JsonObject(Copyable, Movable):
+    var entries: Dict[String, JsonValue]
+
+
+# The format's `comptime Value` on `SelfDescribingDeserializer` — per-format
+# by decision (no shared framework ADT); structurally what EmberJson's
+# `Value` will be.
+struct JsonValue(Copyable, Deserializable, Movable, Serializable):
+    var _v: Variant[
+        JsonNull, Bool, Int64, Float64, String, JsonArray, JsonObject
+    ]
+
+    # Mutually recursive with `JsonArray`/`JsonObject`, so the compiler
+    # cannot prove implicit deletability on its own; the explicit (empty)
+    # destructor breaks the cycle — fields are still destroyed automatically
+    # after it runs (EmberJson's `Value` uses the same trick).
+    def __deinit__(deinit self):
+        pass
+
+    @implicit
+    def __init__(out self, var v: JsonNull):
+        self._v = v^
+
+    @implicit
+    def __init__(out self, var v: Bool):
+        self._v = v
+
+    @implicit
+    def __init__(out self, var v: Int64):
+        self._v = v
+
+    @implicit
+    def __init__(out self, var v: Float64):
+        self._v = v
+
+    @implicit
+    def __init__(out self, var v: String):
+        self._v = v^
+
+    @implicit
+    def __init__(out self, var v: JsonArray):
+        self._v = v^
+
+    @implicit
+    def __init__(out self, var v: JsonObject):
+        self._v = v^
+
+    def is_null(self) -> Bool:
+        return self._v.isa[JsonNull]()
+
+    def is_bool(self) -> Bool:
+        return self._v.isa[Bool]()
+
+    def is_int(self) -> Bool:
+        return self._v.isa[Int64]()
+
+    def is_float(self) -> Bool:
+        return self._v.isa[Float64]()
+
+    def is_string(self) -> Bool:
+        return self._v.isa[String]()
+
+    def is_array(self) -> Bool:
+        return self._v.isa[JsonArray]()
+
+    def is_object(self) -> Bool:
+        return self._v.isa[JsonObject]()
+
+    def as_bool(self) -> Bool:
+        return self._v.unsafe_get[Bool]()
+
+    def as_int(self) -> Int64:
+        return self._v.unsafe_get[Int64]()
+
+    def as_float(self) -> Float64:
+        return self._v.unsafe_get[Float64]()
+
+    def as_string(self) -> String:
+        return self._v.unsafe_get[String]().copy()
+
+    def as_array(self) -> List[JsonValue]:
+        return self._v.unsafe_get[JsonArray]().values.copy()
+
+    def as_object(self) -> Dict[String, JsonValue]:
+        return self._v.unsafe_get[JsonObject]().entries.copy()
+
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        comptime if conforms_to(type_of(d), SelfDescribingDeserializer):
+            # Sound because the only self-describing format in scope
+            # declares `comptime Value = JsonValue`.
+            return rebind_var[Self](d.deserialize_any())
+        else:
+            raise DeserializationError(
+                String("JsonValue requires a self-describing deserializer"),
+                DerErrorKind.InvalidValue,
+            )
+
+    def serialize(self, mut s: Some[Serializer]) raises SerializationError:
+        if self._v.isa[JsonNull]():
+            s.serialize_none()
+        elif self._v.isa[Bool]():
+            s.serialize_bool(self._v.unsafe_get[Bool]())
+        elif self._v.isa[Int64]():
+            s.serialize_number(self._v.unsafe_get[Int64]())
+        elif self._v.isa[Float64]():
+            s.serialize_number(self._v.unsafe_get[Float64]())
+        elif self._v.isa[String]():
+            s.serialize_string(self._v.unsafe_get[String]())
+        elif self._v.isa[JsonArray]():
+            ref arr = self._v.unsafe_get[JsonArray]().values
+            var st = s.begin_seq(len(arr))
+            for i in range(len(arr)):
+                st.serialize_element(arr[i])
+            st.end()
+        else:
+            ref obj = self._v.unsafe_get[JsonObject]().entries
+            var st = s.begin_map(len(obj))
+            for entry in obj.items():
+                st.serialize_key(entry.key)
+                st.serialize_value(entry.value)
+            st.end()
 
 
 def _invalid(message: String) -> DeserializationError:
@@ -491,7 +633,7 @@ struct JsonEnumDe[origin: MutOrigin](EnumDerState):
 
 
 @fieldwise_init
-struct JsonDeserializer[origin: MutOrigin](Deserializer):
+struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
     var cursor: Pointer[JsonCursor, Self.origin]
 
     comptime SeqType = JsonSeqDe[Self.origin]
@@ -499,6 +641,7 @@ struct JsonDeserializer[origin: MutOrigin](Deserializer):
     comptime StructType = JsonStructDe[Self.origin]
     comptime TupleType = JsonTupleDe[Self.origin]
     comptime EnumType = JsonEnumDe[Self.origin]
+    comptime Value = JsonValue
 
     def expect_bool(mut self) raises DeserializationError -> Bool:
         self.cursor[].skip_ws()
@@ -589,6 +732,46 @@ struct JsonDeserializer[origin: MutOrigin](Deserializer):
 
     # `expect_struct` is intentionally NOT implemented: the framework's
     # reflection-driven default on `Deserializer` drives the framing above.
+
+    def deserialize_any(mut self) raises DeserializationError -> JsonValue:
+        self.cursor[].skip_ws()
+        var c = self.cursor[].peek()
+        if c == ord("n"):
+            self.cursor[].expect_lit("null")
+            return JsonValue(JsonNull())
+        if c == ord("t") or c == ord("f"):
+            return JsonValue(self.expect_bool())
+        if c == ord('"'):
+            return JsonValue(self.expect_string())
+        if c == ord("["):
+            var arr = List[JsonValue]()
+            var st = self.begin_seq()
+            while st.has_next():
+                arr.append(st.expect_element[JsonValue]())
+            st.end()
+            return JsonValue(JsonArray(values=arr^))
+        if c == ord("{"):
+            var obj = Dict[String, JsonValue]()
+            var st = self.begin_map()
+            while st.has_next():
+                var k = st.expect_key[String]()
+                obj[k^] = st.expect_value[JsonValue]()
+            st.end()
+            return JsonValue(JsonObject(entries=obj^))
+        var tok = self.cursor[].read_number()
+        if tok.byte_length() == 0:
+            raise _invalid(String("expected a JSON value"))
+        var is_float = False
+        for cp in tok.codepoint_slices():
+            if cp == "." or cp == "e" or cp == "E":
+                is_float = True
+                break
+        try:
+            if is_float:
+                return JsonValue(atof(tok))
+            return JsonValue(Int64(atol(tok)))
+        except e:
+            raise _invalid(String("invalid number: '") + tok + "'")
 
 
 def from_json[T: AnyType](var s: String) raises DeserializationError -> T:

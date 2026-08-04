@@ -6,7 +6,8 @@ from std.testing import (
     TestSuite,
 )
 from std.utils import Variant
-from _json_format import from_json
+from _json_format import from_json, to_json, JsonValue, JsonDeserializer
+from emberserde.deserialize import Deserializer, SelfDescribingDeserializer
 from emberserde.error import DerErrorKind
 from emberserde.field import Rename
 from emberserde.struct_modifiers import (
@@ -221,6 +222,73 @@ def test_invalid_number_kind() raises:
     except e:
         kind = e.kind
     assert_equal(kind._kind, DerErrorKind.InvalidValue._kind)
+
+
+def test_any_null() raises:
+    assert_true(from_json[JsonValue]("null").is_null())
+
+
+def test_any_bool() raises:
+    var v = from_json[JsonValue]("true")
+    assert_true(v.is_bool())
+    assert_true(v.as_bool())
+
+
+def test_any_int() raises:
+    var v = from_json[JsonValue]("42")
+    assert_true(v.is_int())
+    assert_equal(v.as_int(), Int64(42))
+
+
+def test_any_float() raises:
+    var v = from_json[JsonValue]("2.5")
+    assert_true(v.is_float())
+    assert_equal(v.as_float(), Float64(2.5))
+
+
+def test_any_string() raises:
+    var v = from_json[JsonValue]('"hi"')
+    assert_true(v.is_string())
+    assert_equal(v.as_string(), String("hi"))
+
+
+def test_any_array() raises:
+    var v = from_json[JsonValue]('[1,"two",null]')
+    assert_true(v.is_array())
+    var arr = v.as_array()
+    assert_equal(len(arr), 3)
+    assert_equal(arr[0].as_int(), Int64(1))
+    assert_equal(arr[1].as_string(), String("two"))
+    assert_true(arr[2].is_null())
+
+
+def test_any_nested_object() raises:
+    var v = from_json[JsonValue]('{"a":{"b":[1,true]}}')
+    assert_true(v.is_object())
+    var inner = v.as_object()["a"].as_object()["b"].as_array()
+    assert_equal(inner[0].as_int(), Int64(1))
+    assert_true(inner[1].as_bool())
+
+
+def test_any_malformed_raises() raises:
+    with assert_raises():
+        _ = from_json[JsonValue]("@")
+
+
+# Parse → re-serialize → string equality against the hand-written literal:
+# insertion-ordered `Dict` keeps object key order stable, so the compact
+# canonical form round-trips exactly.
+def test_round_trip_through_json_value() raises:
+    var src = String('{"a":[1,2.5,true,null,"s\\"x"],"b":{"c":false}}')
+    var v = from_json[JsonValue](src.copy())
+    assert_equal(to_json(v), src)
+
+
+def test_conformance() raises:
+    assert_true(
+        conforms_to(JsonDeserializer[MutAnyOrigin], SelfDescribingDeserializer)
+    )
+    assert_true(conforms_to(JsonDeserializer[MutAnyOrigin], Deserializer))
 
 
 def main() raises:

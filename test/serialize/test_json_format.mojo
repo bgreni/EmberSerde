@@ -1,6 +1,6 @@
 from std.testing import assert_equal, TestSuite
 from std.utils import Variant
-from _json_format import to_json
+from _json_format import to_json, JsonValue, JsonArray, JsonObject, JsonNull
 from emberserde.struct_modifiers import RenameAll, RenamePolicy
 
 
@@ -99,6 +99,20 @@ def test_enum() raises:
 def test_bytes() raises:
     var data: List[Byte] = [1, 2, 255]
     assert_equal(to_json(Span(data)), "[1,2,255]")
+
+
+def test_json_value_serialize() raises:
+    var arr = List[JsonValue]()
+    arr.append(JsonValue(JsonNull()))
+    arr.append(JsonValue(True))
+    arr.append(JsonValue(Int64(1)))
+    arr.append(JsonValue(String("s")))
+    var obj = Dict[String, JsonValue]()
+    obj[String("k")] = JsonValue(JsonArray(values=arr^))
+    assert_equal(
+        to_json(JsonValue(JsonObject(entries=obj^))),
+        '{"k":[null,true,1,"s"]}',
+    )
 
 
 def main() raises:
