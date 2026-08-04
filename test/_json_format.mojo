@@ -12,7 +12,9 @@
 # bare payload and `None` is `null`; bytes are an array of numbers.
 # Non-string map keys are stringified (quoted) on write and unwrapped from
 # their quotes on read, serde_json-style. It follows the same pointer-handle
-# pattern as the other two formats.
+# pattern as the other two formats. Like the debug format, the parser is
+# lenient about element commas: missing or leading commas inside a container
+# are tolerated rather than rejected.
 
 from std.builtin.rebind import rebind_var
 from std.reflection import reflect
@@ -670,6 +672,8 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
 
     def expect_string(mut self) raises DeserializationError -> String:
         self.cursor[].skip_ws()
+        if self.cursor[].peek() != ord('"'):
+            raise _mismatch(String("expected a string"))
         self.cursor[].expect_lit('"')
         return self.cursor[].read_string_contents()
 
@@ -684,11 +688,15 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
 
     def begin_seq(mut self) raises DeserializationError -> Self.SeqType:
         self.cursor[].skip_ws()
+        if self.cursor[].peek() != ord("["):
+            raise _mismatch(String("expected an array"))
         self.cursor[].expect_lit("[")
         return JsonSeqDe(cursor=self.cursor)
 
     def begin_map(mut self) raises DeserializationError -> Self.MapType:
         self.cursor[].skip_ws()
+        if self.cursor[].peek() != ord("{"):
+            raise _mismatch(String("expected an object"))
         self.cursor[].expect_lit("{")
         return JsonMapDe(cursor=self.cursor)
 
@@ -698,6 +706,8 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
         # Field names are read off the wire, so `T` is unused; the
         # framework's reflection default drives the name-matching loop.
         self.cursor[].skip_ws()
+        if self.cursor[].peek() != ord("{"):
+            raise _mismatch(String("expected an object"))
         self.cursor[].expect_lit("{")
         return JsonStructDe(cursor=self.cursor)
 
@@ -705,6 +715,8 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
         field_count: Int
     ](mut self) raises DeserializationError -> Self.TupleType:
         self.cursor[].skip_ws()
+        if self.cursor[].peek() != ord("["):
+            raise _mismatch(String("expected an array"))
         self.cursor[].expect_lit("[")
         return JsonTupleDe(cursor=self.cursor, first=True)
 
@@ -716,6 +728,8 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
         mut self, arm_names: List[String]
     ) raises DeserializationError -> Self.EnumType:
         self.cursor[].skip_ws()
+        if self.cursor[].peek() != ord("{"):
+            raise _mismatch(String("expected an object"))
         self.cursor[].expect_lit("{")
         self.cursor[].skip_ws()
         self.cursor[].expect_lit('"')
@@ -774,7 +788,12 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
             raise _invalid(String("invalid number: '") + tok + "'")
 
 
-def from_json[T: AnyType](var s: String) raises DeserializationError -> T:
+def from_json[
+    T: ImplicitlyDeletable
+](var s: String, out result: T) raises DeserializationError:
     var cursor = JsonCursor(s^, 0)
     var d = JsonDeserializer(cursor=Pointer(to=cursor))
-    return deserialize[T](d)
+    result = deserialize[T](d)
+    d.cursor[].skip_ws()
+    if not d.cursor[].at_end():
+        raise _invalid(String("trailing characters after JSON value"))

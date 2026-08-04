@@ -206,6 +206,13 @@ def test_malformed_raises() raises:
         _ = from_json[List[Int]]("[1,2")
 
 
+def test_trailing_garbage_raises() raises:
+    with assert_raises():
+        _ = from_json[Int]("42abc")
+    with assert_raises():
+        _ = from_json[Bool]("truex")
+
+
 def test_type_mismatch_kind() raises:
     var kind = DerErrorKind.Custom
     try:
@@ -219,6 +226,29 @@ def test_invalid_number_kind() raises:
     var kind = DerErrorKind.Custom
     try:
         _ = from_json[Int]("1.2.3")
+    except e:
+        kind = e.kind
+    assert_equal(kind._kind, DerErrorKind.InvalidValue._kind)
+
+
+def test_wrong_shape_kinds() raises:
+    var kind = DerErrorKind.Custom
+    try:
+        _ = from_json[String]("42")
+    except e:
+        kind = e.kind
+    assert_equal(kind._kind, DerErrorKind.TypeMismatch._kind)
+
+    kind = DerErrorKind.Custom
+    try:
+        _ = from_json[List[Int]]('"x"')
+    except e:
+        kind = e.kind
+    assert_equal(kind._kind, DerErrorKind.TypeMismatch._kind)
+
+    kind = DerErrorKind.Custom
+    try:
+        _ = from_json[String]('"unterminated')
     except e:
         kind = e.kind
     assert_equal(kind._kind, DerErrorKind.InvalidValue._kind)
@@ -244,6 +274,20 @@ def test_any_float() raises:
     var v = from_json[JsonValue]("2.5")
     assert_true(v.is_float())
     assert_equal(v.as_float(), Float64(2.5))
+
+
+def test_any_number_forms() raises:
+    var neg_int = from_json[JsonValue]("-5")
+    assert_true(neg_int.is_int())
+    assert_equal(neg_int.as_int(), Int64(-5))
+
+    var exp_float = from_json[JsonValue]("1e3")
+    assert_true(exp_float.is_float())
+    assert_equal(exp_float.as_float(), Float64(1000.0))
+
+    var neg_float = from_json[JsonValue]("-1.5")
+    assert_true(neg_float.is_float())
+    assert_equal(neg_float.as_float(), Float64(-1.5))
 
 
 def test_any_string() raises:

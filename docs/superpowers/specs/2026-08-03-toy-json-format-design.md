@@ -115,8 +115,11 @@ Same safe-pointer pattern as both existing formats:
 Every parse failure raises `DeserializationError` with a specific message:
 `TypeMismatch` for wrong-shape input (e.g. `expect_bool` seeing `[`),
 `InvalidValue` for malformed text (unterminated string, bad number, garbage
-literal). `end()` methods strictly consume their closing delimiter and raise
-if absent. No aborts, no silent recovery.
+literal). A truncated or unrecognized bare literal (e.g. `tru`) reports
+`TypeMismatch` — the leading byte already promised a bool shape — while
+`InvalidValue` covers malformed text within an otherwise-established shape.
+`end()` methods strictly consume their closing delimiter and raise if absent.
+No aborts, no silent recovery.
 
 ## Testing
 
