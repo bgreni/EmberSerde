@@ -1,3 +1,7 @@
+from std.builtin.rebind import downcast
+from std.reflection import reflect
+
+
 @fieldwise_init
 struct RenamePolicy(Equatable, ImplicitlyCopyable, Writable):
     var _value: Int
@@ -49,6 +53,25 @@ trait RenameAll:
 # Raised-on instead of ignored: an unknown wire field makes deserialization fail.
 trait DenyUnknownFields:
     pass
+
+
+# A stable wire tag for a type used as a `Variant` arm. Without it the tag is
+# `reflect[AT].name()` — a canonical name that embeds module paths and stdlib
+# spellings (`Int64` renders as `SIMD[DType.int64, 1]`), so moving a type
+# between modules or a stdlib respelling silently breaks the wire. Read via
+# `downcast` the way `FieldMeta` is. Note that name tags are best treated as
+# debug/diagnostic; the arm *index* (also on the `begin_enum` surface) is the
+# stable default real formats should key on.
+trait ArmName:
+    comptime serde_arm_name: StaticString
+
+
+# The tag `AT` rides the wire under when it is a `Variant` arm: its declared
+# `ArmName`, or its canonical `reflect` name as the fallback.
+def arm_tag[AT: AnyType]() -> String:
+    comptime if conforms_to(AT, ArmName):
+        return String(downcast[AT, ArmName].serde_arm_name)
+    return String(reflect[AT].name())
 
 
 def _is_upper(c: Int) -> Bool:

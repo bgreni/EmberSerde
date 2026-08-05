@@ -79,6 +79,12 @@ def test_string_escapes() raises:
     assert_equal(from_json[String]('"a\\nb\\tc\\rd"'), String("a\nb\tc\rd"))
 
 
+def test_unicode_string() raises:
+    assert_equal(from_json[String]('"héllo 🌍"'), String("héllo 🌍"))
+    # Escapes adjacent to multi-byte runs keep the runs intact.
+    assert_equal(from_json[String]('"é\\né"'), String("é\né"))
+
+
 def test_whitespace_tolerated() raises:
     var r = from_json[List[Int]]("  [ 1 ,\n\t2 ]  ")
     assert_equal(len(r), 2)
@@ -219,7 +225,15 @@ def test_type_mismatch_kind() raises:
         _ = from_json[Int]('"str"')
     except e:
         kind = e.kind
-    assert_equal(kind._kind, DerErrorKind.TypeMismatch._kind)
+    assert_equal(kind, DerErrorKind.TypeMismatch)
+
+
+def test_numeric_narrowing_rejected() raises:
+    with assert_raises():
+        _ = from_json[UInt8]("300")
+    with assert_raises():
+        _ = from_json[UInt8]("-5")
+    assert_equal(from_json[UInt8]("255"), UInt8(255))
 
 
 def test_invalid_number_kind() raises:
@@ -228,7 +242,7 @@ def test_invalid_number_kind() raises:
         _ = from_json[Int]("1.2.3")
     except e:
         kind = e.kind
-    assert_equal(kind._kind, DerErrorKind.InvalidValue._kind)
+    assert_equal(kind, DerErrorKind.InvalidValue)
 
 
 def test_wrong_shape_kinds() raises:
@@ -237,21 +251,21 @@ def test_wrong_shape_kinds() raises:
         _ = from_json[String]("42")
     except e:
         kind = e.kind
-    assert_equal(kind._kind, DerErrorKind.TypeMismatch._kind)
+    assert_equal(kind, DerErrorKind.TypeMismatch)
 
     kind = DerErrorKind.Custom
     try:
         _ = from_json[List[Int]]('"x"')
     except e:
         kind = e.kind
-    assert_equal(kind._kind, DerErrorKind.TypeMismatch._kind)
+    assert_equal(kind, DerErrorKind.TypeMismatch)
 
     kind = DerErrorKind.Custom
     try:
         _ = from_json[String]('"unterminated')
     except e:
         kind = e.kind
-    assert_equal(kind._kind, DerErrorKind.InvalidValue._kind)
+    assert_equal(kind, DerErrorKind.InvalidValue)
 
 
 def test_any_null() raises:

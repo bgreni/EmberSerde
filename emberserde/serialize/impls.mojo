@@ -1,13 +1,13 @@
-import emberserde
+import emberserde.serialize
 from std.collections import Set, Deque, LinkedList, Counter
 from std.collections.string import Codepoint
 from std.complex import ComplexSIMD
 from std.memory import OwnedPointer, ArcPointer
 from std.reflection import reflect
-from std.sys.intrinsics import _type_is_eq
 from std.utils import Variant
-from emberserde.serialize import Serializer
+from emberserde.serialize import Serializable, Serializer
 from emberserde.error import SerializationError
+from emberserde.struct_modifiers import arm_tag
 
 
 __extension Bool(Serializable):
@@ -22,11 +22,11 @@ __extension String(Serializable):
 
 __extension SIMD(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        comptime if Self.size == 1:
+        comptime if Self.length == 1:
             s.serialize_number(rebind[Scalar[Self.dtype]](self))
         else:
-            var tup = s.begin_tuple[Self.size]()
-            for i in range(Self.size):
+            var tup = s.begin_tuple[Self.length]()
+            for i in range(Self.length):
                 tup.serialize_element(self[i])
             tup.end()
 
@@ -49,15 +49,16 @@ __extension Optional(Serializable):
             s.serialize_none()
 
 
-# Externally tagged: the active arm's type name is the tag, the arm's value the
-# payload. `Self.Ts` (the variant's arm-type pack) is what makes this work —
-# `reflect` can't enumerate variant arms, but the pack can.
+# Externally tagged: the active arm's tag is its `ArmName` (or its type name
+# as the fallback), the arm's value the payload. `Self.Ts` (the variant's
+# arm-type pack) is what makes this work — `reflect` can't enumerate variant
+# arms, but the pack can.
 __extension Variant(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        comptime for i in range(Self.Ts.size):
+        comptime for i in range(Self.Ts.length):
             comptime AT = Self.Ts[i]
             if self.isa[AT]():
-                var st = s.begin_enum[reflect[Self].name(), reflect[AT].name()](
+                var st = s.begin_enum[reflect[Self].name(), arm_tag[AT]()](
                     UInt32(i)
                 )
                 st.serialize_payload(self.unsafe_get[AT]())
@@ -72,14 +73,14 @@ __extension Codepoint(Serializable):
 
 __extension ComplexSIMD(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        comptime if Self.size == 1:
+        comptime if Self.length == 1:
             var tup = s.begin_tuple[2]()
             tup.serialize_element(self.re)
             tup.serialize_element(self.im)
             tup.end()
         else:
-            var tup = s.begin_tuple[Self.size]()
-            for i in range(Self.size):
+            var tup = s.begin_tuple[Self.length]()
+            for i in range(Self.length):
                 tup.serialize_element(Tuple(self.re[i], self.im[i]))
             tup.end()
 
@@ -122,10 +123,10 @@ __extension Counter(Serializable):
         m.end()
 
 
-__extension InlineArray(Serializable):
+__extension Array(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        var tup = s.begin_tuple[Self.size]()
-        for i in range(Self.size):
+        var tup = s.begin_tuple[Self.length]()
+        for i in range(Self.length):
             tup.serialize_element(self[i])
         tup.end()
 
@@ -155,23 +156,32 @@ __extension Pointer(Serializable):
             Self.address_space == AddressSpace.GENERIC
         ), "Cannot serialize pointer with non-generic address space"
         comptime GenericPtr = Pointer[
-            Self.type, Self.origin, AddressSpace.GENERIC
+            Self.T, Self.origin, address_space=AddressSpace.GENERIC
         ]
         emberserde.serialize.serialize(rebind[GenericPtr](self)[], s)
 
 
-# Covers `StaticString` too, which is just `StringSlice[StaticConstantOrigin]`.
+# `StringSlice` is only a comptime alias for `StringSpan` now, and `__extension`
+# needs the underlying struct. Covers `StaticString` too, which is just
+# `StringSpan[ImmStaticOrigin]`.
 # Non-owning view: serialize-only, same precedent as `Pointer`.
-__extension StringSlice(Serializable):
+__extension StringSpan(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        s.serialize_string(String(self))
+        s.serialize_string(self)
 
 
 # Non-owning view: serialize-only. A `Span[Byte]` routes through the byte hook
 # (`serialize_bytes`); any other element type rides the wire as a seq.
 __extension Span(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        comptime if _type_is_eq[Self.T, Byte]():
+        comptime assert (
+            Self.address_space == AddressSpace.GENERIC
+        ), "Cannot serialize span with non-generic address space"
+        # Canonical-name equality stands in for the removed `_type_is_eq`
+        # intrinsic; the `rebind` below still hard-checks it.
+        comptime if reflect[Self.T].name() == reflect[Byte].name():
             s.serialize_bytes(rebind[Span[Byte, Self.origin]](self))
         else:
-            s.serialize_seq(self)
+            # Rebind to the generic address space, where `Iterable`
+            # conformance holds.
+            s.serialize_seq(rebind[Span[Self.T, Self.origin]](self))

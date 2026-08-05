@@ -77,6 +77,43 @@ def test_optional_field_some_and_none() raises:
     )
 
 
+struct Unit(Copyable, Defaultable, Movable):
+    def __init__(out self):
+        pass
+
+
+def test_zero_field_struct() raises:
+    assert_equal(debug_string(Unit()), "test_struct.Unit {  }")
+
+
+# The classic recursion stress case. `Optional[OwnedPointer[Self]]` does not
+# compile today ("struct has recursive reference to itself" through
+# `Optional`'s inline storage; wrapper indirection dies on the
+# conformance-inference cycle instead), so the recursion vehicle is
+# `List[Self]` — same shape `JsonValue` uses via `JsonArray`.
+@fieldwise_init
+struct TreeNode(Copyable, Movable):
+    var value: Int
+    var kids: List[TreeNode]
+
+    # Explicit (empty) destructor breaks the deletability-inference cycle a
+    # self-referential field creates; fields are still destroyed after it.
+    def __deinit__(deinit self):
+        pass
+
+
+def test_recursive_struct() raises:
+    var kids: List[TreeNode] = [TreeNode(2, List[TreeNode]())]
+    var root = TreeNode(1, kids^)
+    assert_equal(
+        debug_string(root),
+        (
+            "test_struct.TreeNode { value: 1, kids:"
+            " [test_struct.TreeNode { value: 2, kids: [] }] }"
+        ),
+    )
+
+
 def test_custom_impl_overrides_reflection() raises:
     # If the reflection default ran instead, this would render as a struct.
     assert_equal(debug_string(Celsius(20)), '"20C"')

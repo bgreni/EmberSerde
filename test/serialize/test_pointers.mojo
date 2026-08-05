@@ -52,7 +52,8 @@ def test_owned_box_around_collection() raises:
     # A box *around* a collection serializes fine; the limitation is the other
     # way (a collection of non-`Copyable` boxes can't go through the generic
     # `serialize_seq` iterator loop).
-    var xs = OwnedPointer([1, 2, 3])
+    var inner: List[Int] = [1, 2, 3]
+    var xs = OwnedPointer(inner^)
     assert_equal(debug_string(xs), "[1, 2, 3]")
 
 

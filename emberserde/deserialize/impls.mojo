@@ -1,23 +1,16 @@
-import emberserde
+import emberserde.deserialize
 from std.builtin.rebind import downcast, rebind_var
 from std.collections import Set, Deque, LinkedList, Counter
 from std.collections.string import Codepoint
 from std.complex import ComplexSIMD
-from std.memory import OwnedPointer, ArcPointer
+from std.memory import OwnedPointer, ArcPointer, forget_deinit
 from std.os import abort
 from std.reflection import reflect
 from std.utils import Variant
-from emberserde.deserialize import Deserializer
+from emberserde.deserialize import Deserializable, Deserializer
 from emberserde.error import DeserializationError, DerErrorKind
+from emberserde.struct_modifiers import arm_tag
 from emberserde.utils import Base
-
-
-# Drop helper for retiring a partially-built collection on an error-unwind path.
-# `List`/`Dict` are `@explicit_destroy`, so a `var` of a generic element type
-# cannot be implicitly destroyed — but a value statically known to be
-# `ImplicitlyDeletable` can just fall out of scope here.
-def _drop_deletable[T: ImplicitlyDeletable](var x: T):
-    pass
 
 
 __extension Bool(Deserializable):
@@ -41,12 +34,12 @@ __extension SIMD(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        comptime if Self.size == 1:
+        comptime if Self.length == 1:
             return d.expect_number[Self.dtype]()
         else:
             var result = Self()
-            var tup = d.begin_tuple[Self.size]()
-            for i in range(Self.size):
+            var tup = d.begin_tuple[Self.length]()
+            for i in range(Self.length):
                 result[i] = tup.expect_element[Scalar[Self.dtype]]()
             tup.end()
             return result
@@ -89,21 +82,28 @@ __extension Optional(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        return d.expect_optional[Self.T]()
+        comptime assert conforms_to(
+            Self.T, Base
+        ), "Optional deserialize requires a Movable, Deinitable payload"
+        return rebind_var[Self](d.expect_optional[downcast[Self.T, Base]]())
 
 
 __extension Variant(Deserializable):
     @staticmethod
+    def _serde_arm_names() -> List[String]:
+        var names = List[String]()
+        comptime for i in range(Self.Ts.length):
+            names.append(arm_tag[Self.Ts[i]]())
+        return names^
+
+    @staticmethod
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        var arm_names = List[String]()
-        comptime for i in range(Self.Ts.size):
-            arm_names.append(String(reflect[Self.Ts[i]].name()))
-
-        var st = d.begin_enum[Self](arm_names^)
+        comptime arm_names = Self._serde_arm_names()
+        var st = d.begin_enum[Self, arm_names]()
         var idx = st.variant_index()
-        comptime for i in range(Self.Ts.size):
+        comptime for i in range(Self.Ts.length):
             comptime AT = downcast[Self.Ts[i], Base]
             if idx == i:
                 var payload = st.expect_payload[AT]()
@@ -134,7 +134,7 @@ __extension ComplexSIMD(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        comptime if Self.size == 1:
+        comptime if Self.length == 1:
             var tup = d.begin_tuple[2]()
             var re = tup.expect_element[Scalar[Self.dtype]]()
             var im = tup.expect_element[Scalar[Self.dtype]]()
@@ -144,8 +144,8 @@ __extension ComplexSIMD(Deserializable):
             comptime Pair = Tuple[Scalar[Self.dtype], Scalar[Self.dtype]]
             var re = Self.element_type(0)
             var im = Self.element_type(0)
-            var tup = d.begin_tuple[Self.size]()
-            for i in range(Self.size):
+            var tup = d.begin_tuple[Self.length]()
+            for i in range(Self.length):
                 var pair = tup.expect_element[Pair]()
                 re[i] = pair[0]
                 im[i] = pair[1]
@@ -158,23 +158,26 @@ __extension List(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        var result = Self()
-        try:
-            var seq = d.begin_seq()
-            while seq.has_next():
-                result.append(seq.expect_element[Self.T]())
-            seq.end()
-        except e:
-            comptime if conforms_to(Self.T, ImplicitlyDeletable):
-                result^.destroy_with(
-                    _drop_deletable[downcast[Self.T, ImplicitlyDeletable]]
-                )
+        comptime assert conforms_to(
+            Self.T, Deinitable
+        ), "List deserialize requires Deinitable elements"
+        # Build over the downcast element type: `List` is `@explicit_destroy`
+        # unless its elements are statically `Deinitable`, and the
+        # partially-built list must be droppable when a framing call raises.
+        comptime ET = downcast[Self.T, Base]
+        var result = List[ET]()
+        var seq = d.begin_seq()
+        while seq.has_next():
+            comptime if type_of(d).track_error_paths:
+                try:
+                    result.append(seq.expect_element[ET]())
+                except e:
+                    e.prepend_path(String(t"[{len(result)}]"))
+                    raise e^
             else:
-                comptime assert (
-                    False
-                ), "List deserialize requires ImplicitlyDeletable elements"
-            raise e^
-        return result^
+                result.append(seq.expect_element[ET]())
+        seq.end()
+        return rebind_var[Self](result^)
 
 
 __extension Dict(Deserializable):
@@ -182,13 +185,28 @@ __extension Dict(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        var result = Self()
+        comptime assert conforms_to(Self.K, Deinitable) and conforms_to(
+            Self.V, Deinitable
+        ), "Dict deserialize requires Deinitable keys and values"
+        comptime KT = downcast[Self.K, KeyElement & Deinitable]
+        comptime VT = downcast[Self.V, Base]
+        var result = Dict[KT, VT]()
         var m = d.begin_map()
         while m.has_next():
-            var k = m.expect_key[Self.K]()
-            result[k^] = m.expect_value[Self.V]()
+            comptime if type_of(d).track_error_paths:
+                # Entry index, not the key: `K` is not generically Writable.
+                var idx = len(result)
+                try:
+                    var k = m.expect_key[KT]()
+                    result[k^] = m.expect_value[VT]()
+                except e:
+                    e.prepend_path(String(t"[{idx}]"))
+                    raise e^
+            else:
+                var k = m.expect_key[KT]()
+                result[k^] = m.expect_value[VT]()
         m.end()
-        return result^
+        return rebind_var[Self](result^)
 
 
 __extension Set(Deserializable):
@@ -196,12 +214,23 @@ __extension Set(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        var result = Self()
+        comptime assert conforms_to(
+            Self.T, Deinitable
+        ), "Set deserialize requires Deinitable elements"
+        comptime ET = downcast[Self.T, KeyElement & Deinitable]
+        var result = Set[ET]()
         var seq = d.begin_seq()
         while seq.has_next():
-            result.add(seq.expect_element[Self.T]())
+            comptime if type_of(d).track_error_paths:
+                try:
+                    result.add(seq.expect_element[ET]())
+                except e:
+                    e.prepend_path(String(t"[{len(result)}]"))
+                    raise e^
+            else:
+                result.add(seq.expect_element[ET]())
         seq.end()
-        return result^
+        return rebind_var[Self](result^)
 
 
 __extension Deque(Deserializable):
@@ -209,12 +238,23 @@ __extension Deque(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        var result = Self()
+        comptime assert conforms_to(
+            Self.ElementType, Deinitable
+        ), "Deque deserialize requires Deinitable elements"
+        comptime ET = downcast[Self.ElementType, Base]
+        var result = Deque[ET]()
         var seq = d.begin_seq()
         while seq.has_next():
-            result.append(seq.expect_element[Self.ElementType]())
+            comptime if type_of(d).track_error_paths:
+                try:
+                    result.append(seq.expect_element[ET]())
+                except e:
+                    e.prepend_path(String(t"[{len(result)}]"))
+                    raise e^
+            else:
+                result.append(seq.expect_element[ET]())
         seq.end()
-        return result^
+        return rebind_var[Self](result^)
 
 
 __extension LinkedList(Deserializable):
@@ -222,12 +262,23 @@ __extension LinkedList(Deserializable):
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        var result = Self()
+        comptime assert conforms_to(
+            Self.ElementType, Deinitable
+        ), "LinkedList deserialize requires Deinitable elements"
+        comptime ET = downcast[Self.ElementType, Base]
+        var result = LinkedList[ET]()
         var seq = d.begin_seq()
         while seq.has_next():
-            result.append(seq.expect_element[Self.ElementType]())
+            comptime if type_of(d).track_error_paths:
+                try:
+                    result.append(seq.expect_element[ET]())
+                except e:
+                    e.prepend_path(String(t"[{len(result)}]"))
+                    raise e^
+            else:
+                result.append(seq.expect_element[ET]())
         seq.end()
-        return result^
+        return rebind_var[Self](result^)
 
 
 __extension Counter(Deserializable):
@@ -238,25 +289,51 @@ __extension Counter(Deserializable):
         var result = Self()
         var m = d.begin_map()
         while m.has_next():
-            var k = m.expect_key[Self.V]()
-            result[k^] = m.expect_value[Int]()
+            comptime if type_of(d).track_error_paths:
+                var idx = len(result)
+                try:
+                    var k = m.expect_key[Self.V]()
+                    result[k^] = m.expect_value[Int]()
+                except e:
+                    e.prepend_path(String(t"[{idx}]"))
+                    raise e^
+            else:
+                var k = m.expect_key[Self.V]()
+                result[k^] = m.expect_value[Int]()
         m.end()
         return result^
 
 
-__extension InlineArray(Deserializable):
+__extension Array(Deserializable):
     @staticmethod
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        var result = Self(uninitialized=True)
-        var tup = d.begin_tuple[Self.size]()
-        for i in range(Self.size):
-            (result.unsafe_ptr() + i).init_pointee_move(
-                tup.expect_element[Self.ElementType]()
-            )
-        tup.end()
-        return result^
+        comptime assert conforms_to(
+            Self.T, Base
+        ), "Array deserialize requires Movable, Deinitable elements"
+        comptime ET = downcast[Self.T, Base]
+        var result = Array[ET, Self.length](uninitialized=True)
+        # On a mid-array error only the initialized prefix may be destroyed —
+        # letting `result` drop would run destructors over uninitialized
+        # elements.
+        var count = 0
+        try:
+            var tup = d.begin_tuple[Self.length]()
+            for i in range(Self.length):
+                result.unsafe_ptr().unsafe_offset(i).unsafe_write(
+                    tup.expect_element[ET]()
+                )
+                count += 1
+            tup.end()
+        except e:
+            for i in range(count):
+                result.unsafe_ptr().unsafe_offset(i).unsafe_deinit_pointee()
+            forget_deinit(result^)
+            comptime if type_of(d).track_error_paths:
+                e.prepend_path(String(t"[{count}]"))
+            raise e^
+        return rebind_var[Self](result^)
 
 
 __extension Tuple(Deserializable):
@@ -265,13 +342,31 @@ __extension Tuple(Deserializable):
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
         var state = d.begin_tuple[Self.__len__()]()
+        comptime assert Self.element_types.all_conforms_to[
+            Defaultable
+        ](), "Tuple deserialize requires Defaultable elements"
         var result = Self()
+        
+        @parameter
+        def dispose[idx: Int](var elt: Self.element_types[idx]):
+            _ = rebind_var[downcast[Self.element_types[idx], Base]](elt^)
 
-        comptime for i in range(Self.__len__()):
-            comptime ET = downcast[Self.element_types[i], Base]
-            trait_downcast[Base](result[i]) = state.expect_element[ET]()
+        var filled = 0
+        try:
+            comptime for i in range(Self.__len__()):
+                comptime assert conforms_to(
+                    Self.element_types[i], Base
+                ), "Tuple deserialize requires Movable, Deinitable elements"
+                comptime ET = downcast[Self.element_types[i], Base]
+                result[i] = state.expect_element[ET]()
+                filled += 1
 
-        state.end()
+            state.end()
+        except e:
+            result^.deinit_with[dispose]()
+            comptime if type_of(d).track_error_paths:
+                e.prepend_path(String(t"[{filled}]"))
+            raise e^
 
         return result^
 

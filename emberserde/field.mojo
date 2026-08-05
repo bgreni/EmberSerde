@@ -5,7 +5,7 @@ from .deserialize import (
     deserialize,
 )
 from .serialize import Serializable, SerializationError, Serializer, serialize
-from .field_meta import FieldMeta
+from .field_meta import FieldMeta, __is_optional
 from .utils import Base
 
 
@@ -29,6 +29,10 @@ struct Field[
     default: Optional[T] = None,
 ](
     Copyable where conforms_to(T, Copyable),
+    # NOTE: extending this clause to `... or Bool(default)` (any spelling)
+    # crashes the compiler when a `Skip` field's fill queries the conformance;
+    # the missing-field fill goes through `serde_filled` instead, which needs
+    # no `Defaultable` conformance at all.
     Defaultable where conforms_to(T, Defaultable),
     Deserializable,
     FieldMeta,
@@ -37,7 +41,12 @@ struct Field[
     comptime serde_name = Self.rename
     comptime serde_extra = Self.extra_names
     comptime serde_skip = Self.skip
-    comptime serde_fill_if_missing = Self.skip or Bool(Self.default)
+    # An `Optional` payload keeps its absence-tolerance through the wrapper:
+    # `Rename[Optional[T], ...]` missing from the wire is None, not
+    # `MissingField`.
+    comptime serde_fill_if_missing = Self.skip or Bool(
+        Self.default
+    ) or __is_optional[Self.T]()
 
     var value: Self.T
 
@@ -57,6 +66,10 @@ struct Field[
     @implicit
     def __init__(out self, var value: Self.T):
         self.value = value^
+
+    @staticmethod
+    def serde_filled() -> Self:
+        return Self()
 
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
         serialize(self.value, s)

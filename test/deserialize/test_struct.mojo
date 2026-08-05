@@ -111,21 +111,81 @@ def test_unknown_field_skipped_then_missing_raises() raises:
 
 
 def test_duplicate_field_raises() raises:
-    var kind = -1
+    var kind = DerErrorKind.Custom
     try:
         _ = from_debug[Pair]("P { x: 1, x: 2, y: 3 }")
     except e:
-        kind = e.kind._kind
-    assert_equal(kind, DerErrorKind.DuplicateField._kind)
+        kind = e.kind
+    assert_equal(kind, DerErrorKind.DuplicateField)
 
 
 def test_missing_field_raises() raises:
-    var kind = -1
+    var kind = DerErrorKind.Custom
     try:
         _ = from_debug[Pair]("P { x: 1 }")
     except e:
-        kind = e.kind._kind
-    assert_equal(kind, DerErrorKind.MissingField._kind)
+        kind = e.kind
+    assert_equal(kind, DerErrorKind.MissingField)
+
+
+@fieldwise_init
+struct Nest(Copyable, Defaultable, Movable):
+    var label: String
+    var inner: Pair
+
+    def __init__(out self):
+        self.label = String()
+        self.inner = Pair(0, 0)
+
+
+struct Unit(Copyable, Defaultable, Movable):
+    def __init__(out self):
+        pass
+
+
+def test_zero_field_struct() raises:
+    _ = from_debug[Unit]("Unit { }")
+
+
+# The classic recursion stress case. `Optional[OwnedPointer[Self]]` does not
+# compile today ("struct has recursive reference to itself" through
+# `Optional`'s inline storage; wrapper indirection dies on the
+# conformance-inference cycle instead), so the recursion vehicle is
+# `List[Self]` — same shape `JsonValue` uses via `JsonArray`.
+@fieldwise_init
+struct TreeNode(Copyable, Defaultable, Movable):
+    var value: Int
+    var kids: List[TreeNode]
+
+    def __init__(out self):
+        self.value = 0
+        self.kids = List[TreeNode]()
+
+    # Explicit (empty) destructor breaks the deletability-inference cycle a
+    # self-referential field creates; fields are still destroyed after it.
+    def __deinit__(deinit self):
+        pass
+
+
+def test_recursive_struct() raises:
+    var r = from_debug[TreeNode](
+        "T { value: 1, kids: [T { value: 2, kids: [] }] }"
+    )
+    assert_equal(r.value, 1)
+    assert_equal(len(r.kids), 1)
+    assert_equal(r.kids[0].value, 2)
+    assert_equal(len(r.kids[0].kids), 0)
+
+
+def test_error_path_nested_field() raises:
+    # A bad value two levels down: each descent site prepends its segment on
+    # the unwind, spelling out `.inner.y`.
+    var path = String("unset")
+    try:
+        _ = from_debug[Nest]('N { label: "l", inner: P { x: 1, y: oops } }')
+    except e:
+        path = e.path
+    assert_equal(path, ".inner.y")
 
 
 def test_missing_optional_field_defaults_to_none() raises:

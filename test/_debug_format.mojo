@@ -12,6 +12,8 @@
 # reconstructs a `DebugSerializer[origin]` over the shared buffer. No
 # `UnsafePointer`, no erased `MutAnyOrigin`.
 
+from std.collections.string.string_span import get_static_string
+
 from emberserde.serialize import (
     Serializer,
     SeqSerState,
@@ -29,6 +31,7 @@ from emberserde.deserialize import (
     StructDerState,
     TupleDerState,
     EnumDerState,
+    checked_scalar,
     deserialize,
 )
 from emberserde.error import (
@@ -36,6 +39,7 @@ from emberserde.error import (
     DeserializationError,
     DerErrorKind,
 )
+from emberserde.utils import Base
 
 
 @fieldwise_init
@@ -81,7 +85,7 @@ struct DebugStruct[origin: MutOrigin](StructSerState):
     var first: Bool
 
     def serialize_field(
-        mut self, field_name: String, v: Some[AnyType]
+        mut self, field_name: StringSlice, v: Some[AnyType]
     ) raises SerializationError:
         if not self.first:
             self.out[] += ", "
@@ -141,7 +145,7 @@ struct DebugSerializer[origin: MutOrigin](Serializer):
     ](mut self, v: Scalar[dt]) raises SerializationError:
         self.out[] += String(v)
 
-    def serialize_string(mut self, v: String) raises SerializationError:
+    def serialize_string(mut self, v: StringSlice) raises SerializationError:
         self.out[] += '"'
         self.out[] += v
         self.out[] += '"'
@@ -245,11 +249,13 @@ struct DebugCursor(Movable):
             self.advance()
 
     def _slice(self, start: Int, end: Int) -> String:
-        var result = String()
-        var bb = self.buf.as_bytes()
-        for i in range(start, end):
-            result += chr(Int(bb[i]))
-        return result^
+        # Build from the byte range directly — appending `chr()` per byte
+        # would re-encode each byte of a multi-byte UTF-8 sequence as its own
+        # code point. Offsets always sit on ASCII delimiters, so the range is
+        # valid UTF-8.
+        return String(
+            StringSlice(unsafe_from_utf8=self.buf.as_bytes()[start:end])
+        )
 
     def starts_with(self, lit: StringSlice) -> Bool:
         var lb = lit.as_bytes()
@@ -455,14 +461,7 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         DT: DType
     ](mut self) raises DeserializationError -> Scalar[DT]:
         self.cursor[].skip_ws()
-        var tok = self.cursor[].read_number()
-        try:
-            comptime if DT.is_floating_point():
-                return atof(tok).cast[DT]()
-            else:
-                return Scalar[DT](atol(tok))
-        except e:
-            raise _de_error(String("invalid number: '") + tok + "'")
+        return checked_scalar[DT](self.cursor[].read_number())
 
     def expect_string(mut self) raises DeserializationError -> String:
         self.cursor[].skip_ws()
@@ -475,7 +474,7 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         return s^
 
     def expect_optional[
-        T: Movable
+        T: Base
     ](mut self) raises DeserializationError -> Optional[T]:
         self.cursor[].skip_ws()
         if self.cursor[].starts_with("None"):
@@ -519,10 +518,8 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
     # via `arm_names`; the matching `)` is `end`'s job. Only called for
     # `Variant` targets, so no ambiguity with tuples/structs.
     def begin_enum[
-        T: AnyType
-    ](
-        mut self, arm_names: List[String]
-    ) raises DeserializationError -> Self.EnumType:
+        T: AnyType, arm_names: List[String]
+    ](mut self) raises DeserializationError -> Self.EnumType:
         self.cursor[].skip_ws()
         var start = self.cursor[].pos
         while not self.cursor[].at_end() and self.cursor[].peek() != ord("("):
@@ -530,10 +527,11 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         var name = self.cursor[]._slice(start, self.cursor[].pos)
         self.cursor[].expect_lit("(")
         var idx = -1
-        for i in range(len(arm_names)):
-            if arm_names[i] == name:
+        # `comptime for` over the interned candidates: no per-value list.
+        comptime for i in range(len(arm_names)):
+            comptime an = get_static_string[arm_names[i]]()
+            if idx == -1 and name == an:
                 idx = i
-                break
         return DebugEnumDe(cursor=self.cursor, idx=idx)
 
     # `expect_struct` is intentionally NOT implemented here: the framework's

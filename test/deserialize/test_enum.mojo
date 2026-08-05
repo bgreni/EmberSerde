@@ -2,6 +2,7 @@ from std.utils import Variant
 from std.testing import assert_equal, assert_true, assert_raises, TestSuite
 from _debug_format import from_debug
 from _token_format import from_tokens
+from emberserde.struct_modifiers import ArmName
 
 
 @fieldwise_init
@@ -40,6 +41,25 @@ def test_variant_struct_arm() raises:
 def test_unknown_variant_raises() raises:
     with assert_raises():
         _ = from_debug[Variant[Int64, String]]("Bogus(1)")
+
+
+@fieldwise_init
+struct Named(ArmName, Copyable, Defaultable, Movable):
+    comptime serde_arm_name: StaticString = "named"
+    var n: Int
+
+    def __init__(out self):
+        self.n = 0
+
+
+def test_variant_arm_name_binds_tag() raises:
+    # The declared `ArmName` is the tag; the canonical type name no longer
+    # matches.
+    var r = from_debug[Variant[Int64, Named]]("named(N { n: 3 })")
+    assert_true(r.isa[Named]())
+    assert_equal(r.unsafe_get[Named]().n, 3)
+    with assert_raises():
+        _ = from_debug[Variant[Int64, Named]]("test_enum.Named(N { n: 3 })")
 
 
 # Non-self-describing wire: hand-written `[index, payload]` token lists.

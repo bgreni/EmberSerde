@@ -11,9 +11,17 @@ import subprocess
 import sys
 
 TEST_DIR = "test"
+MOJOC = "emberserde.mojoc"
 
 
 def main() -> int:
+    # A precompiled emberserde.mojoc shadows the emberserde/ source directory
+    # under `-I .`, so tests would silently run against stale code. Tests must
+    # always exercise source; the build artifact is only a problem here.
+    if os.path.exists(MOJOC):
+        os.remove(MOJOC)
+        print(f"removed {MOJOC} so tests run against source")
+
     test_files = []
     for root, _dirs, files in os.walk(TEST_DIR):
         for name in sorted(files):

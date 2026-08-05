@@ -17,6 +17,7 @@
 # are tolerated rather than rejected.
 
 from std.builtin.rebind import rebind_var
+from std.collections.string.string_span import get_static_string
 from std.reflection import reflect
 from std.utils import Variant
 
@@ -39,6 +40,7 @@ from emberserde.deserialize import (
     StructDerState,
     TupleDerState,
     EnumDerState,
+    checked_scalar,
     deserialize,
 )
 from emberserde.error import (
@@ -49,7 +51,7 @@ from emberserde.error import (
 from emberserde.utils import Base
 
 
-def _write_quoted(mut out: String, v: String):
+def _write_quoted(mut out: String, v: StringSlice):
     out += '"'
     for cp in v.codepoint_slices():
         if cp == '"':
@@ -119,7 +121,7 @@ struct JsonStructSer[origin: MutOrigin](StructSerState):
     var first: Bool
 
     def serialize_field(
-        mut self, field_name: String, v: Some[AnyType]
+        mut self, field_name: StringSlice, v: Some[AnyType]
     ) raises SerializationError:
         if not self.first:
             self.out[] += ","
@@ -179,7 +181,7 @@ struct JsonSerializer[origin: MutOrigin](Serializer):
     ](mut self, v: Scalar[dt]) raises SerializationError:
         self.out[] += String(v)
 
-    def serialize_string(mut self, v: String) raises SerializationError:
+    def serialize_string(mut self, v: StringSlice) raises SerializationError:
         _write_quoted(self.out[], v)
 
     def serialize_none(mut self) raises SerializationError:
@@ -336,19 +338,19 @@ struct JsonValue(Copyable, Deserializable, Movable, Serializable):
     def as_object(self) -> Dict[String, JsonValue]:
         return self._v.unsafe_get[JsonObject]().entries.copy()
 
+    # The assert fires only when this specialization is instantiated — i.e.
+    # at the call site that feeds a non-self-describing format — and doubles
+    # as the conformance evidence that makes `deserialize_any` callable.
     @staticmethod
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
-        comptime if conforms_to(type_of(d), SelfDescribingDeserializer):
-            # Sound because the only self-describing format in scope
-            # declares `comptime Value = JsonValue`.
-            return rebind_var[Self](d.deserialize_any())
-        else:
-            raise DeserializationError(
-                String("JsonValue requires a self-describing deserializer"),
-                DerErrorKind.InvalidValue,
-            )
+        comptime assert conforms_to(
+            type_of(d), SelfDescribingDeserializer
+        ), "JsonValue requires a self-describing deserializer"
+        # Sound because the only self-describing format in scope
+        # declares `comptime Value = JsonValue`.
+        return rebind_var[Self](d.deserialize_any())
 
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
         if self._v.isa[JsonNull]():
@@ -446,17 +448,27 @@ struct JsonCursor(Movable):
             self.advance()
         return result^
 
-    # Opening quote already consumed; consumes the closing quote.
+    def _slice(self, start: Int, end: Int) -> String:
+        return String(
+            StringSlice(unsafe_from_utf8=self.buf.as_bytes()[start:end])
+        )
+
+    # Opening quote already consumed; consumes the closing quote. Plain bytes
+    # are appended as whole runs (per-byte `chr()` would mangle multi-byte
+    # UTF-8); only escapes interrupt a run.
     def read_string_contents(mut self) raises DeserializationError -> String:
         var result = String()
+        var run_start = self.pos
         while True:
             if self.at_end():
                 raise _invalid(String("unterminated string"))
             var c = self.peek()
             if c == ord('"'):
+                result += self._slice(run_start, self.pos)
                 self.advance()
                 return result^
             if c == ord("\\"):
+                result += self._slice(run_start, self.pos)
                 self.advance()
                 if self.at_end():
                     raise _invalid(String("unterminated escape"))
@@ -476,8 +488,8 @@ struct JsonCursor(Movable):
                         String("unsupported escape: '\\") + chr(e) + "'"
                     )
                 self.advance()
+                run_start = self.pos
             else:
-                result += chr(c)
                 self.advance()
 
     # Skip one whole value: scan to the next `,`/`}`/`]` at depth zero,
@@ -662,13 +674,7 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
         var tok = self.cursor[].read_number()
         if tok.byte_length() == 0:
             raise _mismatch(String("expected a number"))
-        try:
-            comptime if DT.is_floating_point():
-                return atof(tok).cast[DT]()
-            else:
-                return Scalar[DT](atol(tok))
-        except e:
-            raise _invalid(String("invalid number: '") + tok + "'")
+        return checked_scalar[DT](tok)
 
     def expect_string(mut self) raises DeserializationError -> String:
         self.cursor[].skip_ws()
@@ -723,10 +729,8 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
     # Externally tagged `{"Arm":payload}`: consume up to and including the
     # `:`, resolve the arm name to an index; the closing `}` is `end`'s job.
     def begin_enum[
-        T: AnyType
-    ](
-        mut self, arm_names: List[String]
-    ) raises DeserializationError -> Self.EnumType:
+        T: AnyType, arm_names: List[String]
+    ](mut self) raises DeserializationError -> Self.EnumType:
         self.cursor[].skip_ws()
         if self.cursor[].peek() != ord("{"):
             raise _mismatch(String("expected an object"))
@@ -738,10 +742,11 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
         self.cursor[].expect_lit(":")
         self.cursor[].skip_ws()
         var idx = -1
-        for i in range(len(arm_names)):
-            if arm_names[i] == name:
+        # `comptime for` over the interned candidates: no per-value list.
+        comptime for i in range(len(arm_names)):
+            comptime an = get_static_string[arm_names[i]]()
+            if idx == -1 and name == an:
                 idx = i
-                break
         return JsonEnumDe(cursor=self.cursor, idx=idx)
 
     # `expect_struct` is intentionally NOT implemented: the framework's
@@ -780,16 +785,16 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
             if cp == "." or cp == "e" or cp == "E":
                 is_float = True
                 break
-        try:
-            if is_float:
+        if is_float:
+            try:
                 return JsonValue(atof(tok))
-            return JsonValue(Int64(atol(tok)))
-        except e:
-            raise _invalid(String("invalid number: '") + tok + "'")
+            except e:
+                raise _invalid(String("invalid number: '") + tok + "'")
+        return JsonValue(checked_scalar[DType.int64](tok))
 
 
 def from_json[
-    T: ImplicitlyDeletable
+    T: Deinitable
 ](var s: String, out result: T) raises DeserializationError:
     var cursor = JsonCursor(s^, 0)
     var d = JsonDeserializer(cursor=Pointer(to=cursor))

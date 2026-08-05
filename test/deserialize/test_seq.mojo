@@ -41,19 +41,19 @@ def test_nested_list() raises:
 
 def test_inline_array_of_int() raises:
     # Statically-sized: rendered with the tuple framing `(...)`, not seq `[...]`.
-    var r = from_debug[InlineArray[Int, 3]]("(1, 2, 3)")
+    var r = from_debug[Array[Int, 3]]("(1, 2, 3)")
     assert_equal(r[0], 1)
     assert_equal(r[1], 2)
     assert_equal(r[2], 3)
 
 
 def test_inline_array_single_element() raises:
-    var r = from_debug[InlineArray[Int, 1]]("(7)")
+    var r = from_debug[Array[Int, 1]]("(7)")
     assert_equal(r[0], 7)
 
 
 def test_inline_array_of_string() raises:
-    var r = from_debug[InlineArray[String, 2]]('("a", "bb")')
+    var r = from_debug[Array[String, 2]]('("a", "bb")')
     assert_equal(r[0], String("a"))
     assert_equal(r[1], String("bb"))
 
@@ -131,6 +131,15 @@ def test_linked_list_of_string() raises:
     assert_equal(len(r), 2)
     assert_equal(r.get_nth(0), String("a"))
     assert_equal(r.get_nth(1), String("bb"))
+
+
+def test_error_path_list_index() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[List[Int]]("[1, oops, 3]")
+    except e:
+        path = e.path
+    assert_equal(path, "[1]")
 
 
 def main() raises:

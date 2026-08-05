@@ -2,9 +2,12 @@ from std.testing import (
     assert_equal,
     assert_true,
     assert_false,
+    assert_raises,
     TestSuite,
 )
 from _token_format import from_tokens
+from emberserde.field import Rename, Skip
+from emberserde.struct_modifiers import RenameAll, RenamePolicy
 
 
 @fieldwise_init
@@ -111,6 +114,51 @@ def test_nested_tuple() raises:
     assert_equal(r[0], 1)
     assert_equal(r[1][0], String("x"))
     assert_equal(r[1][1], Int64(2))
+
+
+@fieldwise_init
+struct ModifiedRec(Copyable, Defaultable, Movable, RenameAll):
+    comptime FieldRenamePolicy = RenamePolicy.CamelCase
+    var first_name: Int
+    var user_age: Rename[Int, String("age")]
+    var hidden: Skip[Int]
+    var last: Int
+
+    def __init__(out self):
+        self.first_name = 0
+        self.user_age = Rename[Int, String("age")](value=0)
+        self.hidden = Skip[Int](value=0)
+        self.last = 0
+
+
+def test_modifier_struct() raises:
+    # The wire carries only the three visible fields' values: renames don't
+    # change the token wire, and the skipped field has no tokens — it fills
+    # to its default. Regression test for begin_struct serving declared
+    # names, which made every renamed field fall through to skip_value.
+    var r = from_tokens[ModifiedRec](["1", "2", "3"])
+    assert_equal(r.first_name, 1)
+    assert_equal(r.user_age.value, 2)
+    assert_equal(r.hidden.value, 0)
+    assert_equal(r.last, 3)
+
+
+def test_numeric_narrowing_rejected() raises:
+    with assert_raises():
+        _ = from_tokens[UInt8](["300"])
+    with assert_raises():
+        _ = from_tokens[UInt16](["-1"])
+
+
+def test_error_paths_opted_out() raises:
+    # `TokenDeserializer` declares `track_error_paths = False`, so the wraps
+    # comptime-vanish and the error carries no path.
+    var path = String("unset")
+    try:
+        _ = from_tokens[List[Int]](["3", "10", "oops", "30"])
+    except e:
+        path = e.path
+    assert_equal(path, String())
 
 
 def test_truncated_stream_raises() raises:

@@ -2,6 +2,7 @@ from std.utils import Variant
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string
 from _token_format import to_tokens
+from emberserde.struct_modifiers import ArmName
 
 
 @fieldwise_init
@@ -25,6 +26,20 @@ def test_variant_int_arm() raises:
 def test_variant_string_arm() raises:
     var v = Variant[Int64, String](String("hi"))
     assert_equal(debug_string(v), 'String("hi")')
+
+
+# An `ArmName` declaration replaces the canonical type name as the tag, making
+# it a stable wire identifier (module moves and stdlib respellings can't
+# change it).
+@fieldwise_init
+struct Named(ArmName, Copyable, Movable):
+    comptime serde_arm_name: StaticString = "named"
+    var n: Int
+
+
+def test_variant_arm_name_overrides_tag() raises:
+    var v = Variant[Int64, Named](Named(3))
+    assert_equal(debug_string(v), "named(test_enum.Named { n: 3 })")
 
 
 # A struct arm: the enum tag and the struct's own name both appear (both

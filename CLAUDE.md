@@ -25,7 +25,7 @@ mojo run -D ASSERT=all -I . -I test test/serialize/test_primitives.mojo
 
 `run_tests.py` walks `test/` **recursively**, runs every `test_*.mojo` as its own `mojo` invocation, and skips helper modules (anything not matching `test_*.mojo`, e.g. `_debug_format.mojo`, which is importable but not executed). Tests are split into `test/serialize/` and `test/deserialize/`; the shared `_debug_format.mojo` helper stays at the `test/` root so both sides import it via `-I test`. Each test file ends with `TestSuite.discover_tests[__functions_in_module()]().run()`.
 
-**Add coverage to the existing test file that already owns the topic — don't spin up a new `test_*.mojo` per type.** The files are organized by data-model category, not by type: collection types (`List`, `InlineArray`, `Set`, ...) go in `test_seq.mojo`, key/value types in `test_map.mojo`, etc. A new test file is only warranted when a genuinely new category appears that no existing file covers.
+**Add coverage to the existing test file that already owns the topic — don't spin up a new `test_*.mojo` per type.** The files are organized by data-model category, not by type: collection types (`List`, `Array`, `Set`, ...) go in `test_seq.mojo`, key/value types in `test_map.mojo`, etc. A new test file is only warranted when a genuinely new category appears that no existing file covers.
 
 Deserialize tests feed **hand-written wire literals** (not serializer output) so a symmetric encode/decode bug can't round-trip past the assertion — the literal pins the actual wire form on its own.
 
@@ -52,10 +52,10 @@ Module layout:
 - [emberserde/deserialize/](emberserde/deserialize/) — `Deserializer`/state traits (in progress).
 - [emberserde/error.mojo](emberserde/error.mojo) — `SerializationError`/`DeserializationError` (Mojo `raises` carries no payload, so a `kind` field is the typed dispatch).
 
-### Two Mojo constraints that shape everything
+### Two Mojo trait-system facts that shape everything
 
 1. **No parametric traits.** You cannot write `trait Serializer[W: Writer]`. Format-agnosticism is achieved with generic functions taking `Some[Serializer]` instead. See the comment in [emberserde/serialize/__init__.mojo](emberserde/serialize/__init__.mojo).
-2. **No associated types on traits.** Serde's `SerializeSeq`/`SerializeMap`/`SerializeStruct` associated types are replaced by `comptime` members on the conforming struct (`comptime SeqType: SeqSerState`, etc.) plus separate state-struct traits (`SeqSerState`, `MapSerState`, `StructSerState`). `begin_seq`/`begin_map`/`begin_struct` return these state structs, which the caller drives with `serialize_element`/`serialize_field`/`end`.
+2. **Associated types are `comptime` trait members.** Serde's `SerializeSeq`/`SerializeMap`/`SerializeStruct` associated types translate directly: the `Serializer` trait declares `comptime SeqType: SeqSerState`, etc., bound by separate state-struct traits (`SeqSerState`, `MapSerState`, `StructSerState`). `begin_seq`/`begin_map`/`begin_struct` return these state structs (`-> Self.SeqType`), which the caller drives with `serialize_element`/`serialize_field`/`end`.
 
 ### The debug format is the trait test-bed
 

@@ -1,6 +1,33 @@
-from std.testing import assert_equal, TestSuite
+from std.testing import assert_equal, assert_true, TestSuite
 from _debug_format import from_debug
+from emberserde.error import DerErrorKind
 from emberserde.field import Defaulted, Field, Rename, Skip
+
+
+# Shadows the prelude name on purpose: a user type merely *named* `Optional`
+# must NOT inherit absence-tolerance (`__is_optional` matches the qualified
+# stdlib name, not the base name).
+@fieldwise_init
+struct Optional(Copyable, Defaultable, Movable):
+    var x: Int
+
+    def __init__(out self):
+        self.x = 0
+
+
+@fieldwise_init
+struct FakeOptRec(Copyable, Movable):
+    var a: Int
+    var o: Optional
+
+
+def test_user_type_named_optional_is_required() raises:
+    var raised = False
+    try:
+        _ = from_debug[FakeOptRec]("FakeOptRec { a: 1 }")
+    except e:
+        raised = True
+    assert_true(raised)
 
 
 # Hand-written wire literals (per CLAUDE.md). A bare `Field` reads as its inner
@@ -29,7 +56,7 @@ def test_field_rename_and_skip() raises:
 struct Rec2(Copyable, Movable):
     var a: Int
     var d: Defaulted[Int, Int(99)]
-    var e: Field[Int, extra_names=[String("e2")]]
+    var e: Field[Int, extra_names=List[String]([String("e2")])]
 
 
 def test_field_default_and_alias() raises:
@@ -38,6 +65,38 @@ def test_field_default_and_alias() raises:
     assert_equal(r.a, 1)
     assert_equal(r.d.value, 99)
     assert_equal(r.e.value, 5)
+
+
+def test_alias_plus_primary_duplicate_raises() raises:
+    # The primary name and an alias both bind the same field, so a wire
+    # carrying both is a duplicate, not two fields.
+    var kind = DerErrorKind.Custom
+    try:
+        _ = from_debug[Rec2]("Rec2 { a: 1, e: 5, e2: 6 }")
+    except err:
+        kind = err.kind
+    assert_equal(kind, DerErrorKind.DuplicateField)
+
+
+@fieldwise_init
+struct Point(Copyable, Movable):
+    var x: Int
+    var y: Int
+
+
+@fieldwise_init
+struct Rec3(Copyable, Movable):
+    var a: Int
+    var p: Defaulted[Point, Point(3, 4)]
+
+
+def test_defaulted_non_defaultable_fills() raises:
+    # `Point` has no zero-arg constructor; the explicit default value alone
+    # must be enough to fill the missing field.
+    var r = from_debug[Rec3]("Rec3 { a: 1 }")
+    assert_equal(r.a, 1)
+    assert_equal(r.p.value.x, 3)
+    assert_equal(r.p.value.y, 4)
 
 
 def main() raises:

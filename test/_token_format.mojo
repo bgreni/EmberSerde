@@ -11,7 +11,7 @@
 #     (and `None` writes `0`), because `Some(v)` and bare `v` would
 #     otherwise be indistinguishable.
 #   * `begin_struct[T]` — field names are never written; the struct state
-#     serves them from `reflect[T]` in declaration order so the framework's
+#     serves `wire_field_names[T]()` in declaration order so the framework's
 #     reflection-driven `expect_struct` default works unchanged.
 #
 # It follows the same pointer-handle pattern as `_debug_format.mojo`.
@@ -34,14 +34,17 @@ from emberserde.deserialize import (
     StructDerState,
     TupleDerState,
     EnumDerState,
+    checked_scalar,
     deserialize,
 )
+from emberserde.field_meta import wire_field_names
 from emberserde.error import (
     SerializationError,
     SerErrorKind,
     DeserializationError,
     DerErrorKind,
 )
+from emberserde.utils import Base
 
 
 # ----------------------------------------------------------------------------
@@ -82,7 +85,7 @@ struct TokenStructSer[origin: MutOrigin](StructSerState):
     var out: Pointer[List[String], Self.origin]
 
     def serialize_field(
-        mut self, field_name: String, v: Some[AnyType]
+        mut self, field_name: StringSlice, v: Some[AnyType]
     ) raises SerializationError:
         # Field names are not written: the reader recovers them from
         # `reflect[T]` in the same declaration order.
@@ -139,8 +142,8 @@ struct TokenSerializer[origin: MutOrigin](Serializer):
     ](mut self, v: Scalar[dt]) raises SerializationError:
         self.out[].append(String(v))
 
-    def serialize_string(mut self, v: String) raises SerializationError:
-        self.out[].append(v)
+    def serialize_string(mut self, v: StringSlice) raises SerializationError:
+        self.out[].append(String(v))
 
     def serialize_none(mut self) raises SerializationError:
         self.out[].append("0")
@@ -295,8 +298,9 @@ struct TokenStructDe[origin: MutOrigin](StructDerState):
         return deserialize[T](sub)
 
     def skip_value(mut self) raises DeserializationError:
-        # Unreachable in practice: the names served above come from
-        # `reflect[T]`, so the framework never sees an unknown field. A
+        # Unreachable through the framework driver: the names served above
+        # are exactly `T`'s wire names (`wire_field_names`), so every one
+        # matches in `expect_struct`. Still raise rather than assert — a
         # non-self-describing wire genuinely cannot skip a value.
         raise DeserializationError(
             String("token format cannot skip values"),
@@ -339,6 +343,10 @@ struct TokenEnumDe[origin: MutOrigin](EnumDerState):
 struct TokenDeserializer[origin: MutOrigin](Deserializer):
     var cursor: Pointer[TokenCursor, Self.origin]
 
+    # Exercises the trait's opt-out: the wraps comptime-vanish, so a failure
+    # surfaces with an empty `path`.
+    comptime track_error_paths = False
+
     comptime SeqType = TokenSeqDe[Self.origin]
     comptime MapType = TokenMapDe[Self.origin]
     comptime StructType = TokenStructDe[Self.origin]
@@ -359,23 +367,13 @@ struct TokenDeserializer[origin: MutOrigin](Deserializer):
     def expect_number[
         DT: DType
     ](mut self) raises DeserializationError -> Scalar[DT]:
-        var tok = self.cursor[].next_token()
-        try:
-            comptime if DT.is_floating_point():
-                return atof(tok).cast[DT]()
-            else:
-                return Scalar[DT](atol(tok))
-        except e:
-            raise DeserializationError(
-                String("invalid number token: '") + tok + "'",
-                DerErrorKind.TypeMismatch,
-            )
+        return checked_scalar[DT](self.cursor[].next_token())
 
     def expect_string(mut self) raises DeserializationError -> String:
         return self.cursor[].next_token()
 
     def expect_optional[
-        T: Movable
+        T: Base
     ](mut self) raises DeserializationError -> Optional[T]:
         var tag = self.cursor[].next_token()
         if tag == "0":
@@ -400,14 +398,12 @@ struct TokenDeserializer[origin: MutOrigin](Deserializer):
     def begin_struct[
         T: AnyType
     ](mut self) raises DeserializationError -> Self.StructType:
-        # Nothing on the wire: serve field names from reflection in
-        # declaration order so the framework's `expect_struct` default can
-        # do its name-matching loop unchanged.
-        var names = List[String]()
-        comptime r = reflect[T]
-        comptime for i in range(r.field_count()):
-            names.append(String(r.field_names()[i]))
-        return TokenStructDe(cursor=self.cursor, names=names^, idx=0)
+        # Nothing on the wire: serve `T`'s wire names (rename/policy applied,
+        # skipped fields dropped) in declaration order so the framework's
+        # `expect_struct` name-matching loop binds every serialized value.
+        return TokenStructDe(
+            cursor=self.cursor, names=wire_field_names[T](), idx=0
+        )
 
     def begin_tuple[
         field_count: Int
@@ -416,10 +412,8 @@ struct TokenDeserializer[origin: MutOrigin](Deserializer):
         return TokenTupleDe(cursor=self.cursor)
 
     def begin_enum[
-        T: AnyType
-    ](
-        mut self, arm_names: List[String]
-    ) raises DeserializationError -> Self.EnumType:
+        T: AnyType, arm_names: List[String]
+    ](mut self) raises DeserializationError -> Self.EnumType:
         # Binary-shaped: the discriminant index is read straight off the wire;
         # `arm_names` is unused because the wire carries no name to resolve.
         return TokenEnumDe(cursor=self.cursor, idx=self.cursor[].next_count())

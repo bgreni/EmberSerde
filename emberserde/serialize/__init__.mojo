@@ -1,4 +1,3 @@
-import emberserde
 from emberserde.utils import unimplemented, Base
 from std.reflection import (
     reflect,
@@ -6,7 +5,12 @@ from std.reflection import (
 
 from .impls import *
 from emberserde.error import SerializationError
-from emberserde.field_meta import wire_name, visible_fields, is_skipped
+from emberserde.field_meta import (
+    static_wire_name,
+    visible_fields,
+    is_skipped,
+    has_unique_wire_names,
+)
 
 
 trait Serializable:
@@ -14,7 +18,7 @@ trait Serializable:
         ...
 
 
-trait SeqSerState(ImplicitlyDeletable):
+trait SeqSerState(Deinitable):
     def serialize_element(mut self, v: Some[AnyType]) raises SerializationError:
         ...
 
@@ -22,7 +26,7 @@ trait SeqSerState(ImplicitlyDeletable):
         ...
 
 
-trait MapSerState(ImplicitlyDeletable):
+trait MapSerState(Deinitable):
     def serialize_key(mut self, k: Some[AnyType]) raises SerializationError:
         ...
 
@@ -33,9 +37,11 @@ trait MapSerState(ImplicitlyDeletable):
         ...
 
 
-trait StructSerState(ImplicitlyDeletable):
+trait StructSerState(Deinitable):
+    # A slice: the framework passes comptime-interned wire names, so taking
+    # owned `String` would force an allocation per field per record.
     def serialize_field(
-        mut self, field_name: String, v: Some[AnyType]
+        mut self, field_name: StringSlice, v: Some[AnyType]
     ) raises SerializationError:
         ...
 
@@ -44,7 +50,7 @@ trait StructSerState(ImplicitlyDeletable):
 
 
 # TODO: Perhaps the size of the tuple could be a parameter in the future.
-trait TupleSerState(ImplicitlyDeletable):
+trait TupleSerState(Deinitable):
     def serialize_element(mut self, v: Some[AnyType]) raises SerializationError:
         ...
 
@@ -52,7 +58,7 @@ trait TupleSerState(ImplicitlyDeletable):
         ...
 
 
-trait EnumSerState(ImplicitlyDeletable):
+trait EnumSerState(Deinitable):
     # Called exactly once with the active arm's value. The payload's shape
     # (primitive/struct/tuple) falls out of normal serialization — no per-shape
     # methods are needed on the format.
@@ -71,18 +77,20 @@ trait Serializer:
     comptime EnumType: EnumSerState
 
     def serialize_bool(mut self, v: Bool) raises SerializationError:
-        unimplemented()
+        unimplemented["serialize_bool"]()
 
     def serialize_number[
         dt: DType, //
     ](mut self, v: Scalar[dt]) raises SerializationError:
-        unimplemented()
+        unimplemented["serialize_number"]()
 
-    def serialize_string(mut self, v: String) raises SerializationError:
-        unimplemented()
+    # A slice (not owned `String`) so borrowed sources — `StringSlice`,
+    # `StaticString`, comptime names — reach the format without allocating.
+    def serialize_string(mut self, v: StringSlice) raises SerializationError:
+        unimplemented["serialize_string"]()
 
     def serialize_none(mut self) raises SerializationError:
-        unimplemented()
+        unimplemented["serialize_none"]()
 
     # A present `Optional` routes through here so the format gets a hook to
     # emit a presence marker before the payload. Self-describing formats
@@ -91,10 +99,10 @@ trait Serializer:
     # `Some(v)` and a bare `v` are byte-identical on the wire and
     # `expect_optional` cannot decode unambiguously.
     def serialize_some(mut self, v: Some[AnyType]) raises SerializationError:
-        emberserde.serialize.serialize(v, self)
+        serialize(v, self)
 
     def serialize_bytes(mut self, v: Span[Byte, _]) raises SerializationError:
-        unimplemented()
+        unimplemented["serialize_bytes"]()
 
     # `size_hint` is the element count when the caller knows it up front.
     # Self-describing formats may ignore it; binary formats that must write a
@@ -120,14 +128,23 @@ trait Serializer:
         ...
 
     # Externally-tagged sum type. `name` is the enum type's name; `variant` is
-    # the active arm's type name (the tag); `idx` is the arm's position (the
-    # discriminant a binary format would write). Self-describing formats key on
-    # `variant`; non-self-describing formats key on `idx`.
+    # the active arm's tag (its `ArmName`, or its canonical type name as the
+    # fallback); `idx` is the arm's position (the discriminant a binary format
+    # would write). Self-describing formats key on `variant`; non-self-
+    # describing formats key on `idx`. `idx` is the stable default for real
+    # formats — a fallback name tag embeds module paths and stdlib spellings,
+    # so it is best treated as debug/diagnostic unless every arm declares an
+    # `ArmName`.
     def begin_enum[
         name: String, variant: String
     ](mut self, idx: UInt32) raises SerializationError -> Self.EnumType:
         ...
 
+    # FRAMEWORK DRIVER, not a format hook: this default body (and
+    # `serialize_struct`'s) is the framework's logic riding on the trait for
+    # dispatch. A format that overrides it silently opts out of framework
+    # semantics (size hints here; skip/rename/wire-name handling in
+    # `serialize_struct`) — override the `begin_*`/state hooks instead.
     def serialize_seq[
         Seq: Iterable
     ](mut self, v: Seq) raises SerializationError:
@@ -139,14 +156,18 @@ trait Serializer:
 
         # st.end()
 
-        comptime assert conforms_to(Seq.IteratorType[origin_of(v)], Base), (
+        # The assert doubles as conformance evidence so `element` can be
+        # implicitly dropped after the borrow below.
+        comptime assert conforms_to(
+            Seq.IteratorType[origin_of(v)].Element, Base
+        ), (
             "Cannot serialize sequence with non-movable or non-implicitly"
             " deletable element type"
         )
 
         var size_hint: Optional[Int]
         comptime if conforms_to(Seq, Sized):
-            size_hint = len(trait_downcast[Sized](v))
+            size_hint = len(v)
         else:
             size_hint = None
 
@@ -158,12 +179,16 @@ trait Serializer:
                 element = it.__next__()
             except e:
                 break
-            st.serialize_element(trait_downcast_var[Base](element^))
+            st.serialize_element(element)
         st.end()
 
     def serialize_struct[T: AnyType](mut self, v: T) raises SerializationError:
         comptime r = reflect[T]
         comptime assert r.is_struct(), "Cannot serialize MLIR type"
+        comptime assert has_unique_wire_names[T](), (
+            "two fields resolve to the same wire name (check renames and"
+            " rename_all)"
+        )
 
         comptime field_count = r.field_count()
         comptime field_names = r.field_names()
@@ -177,8 +202,12 @@ trait Serializer:
         comptime for i in range(field_count):
             comptime FT = r.field_types()[i]
             comptime if not is_skipped[FT]():
+                # Index at comptime so only the one name materializes, not the
+                # whole (non-ImplicitlyCopyable) field-names array.
+                comptime declared_name = field_names[i]
                 state.serialize_field(
-                    wire_name[T, FT](field_names[i]), r.field_ref[i](v)
+                    static_wire_name[T, FT, declared_name](),
+                    r.field_ref[i](v),
                 )
 
         state.end()

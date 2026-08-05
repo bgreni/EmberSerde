@@ -25,6 +25,26 @@ def test_unsigned_ints() raises:
     assert_equal(from_debug[UInt64]("64"), UInt64(64))
 
 
+def test_unicode_string() raises:
+    assert_equal(from_debug[String]('"héllo 🌍"'), String("héllo 🌍"))
+
+
+def test_numeric_narrowing_rejected() raises:
+    # Out-of-range wire literals raise instead of silently wrapping
+    # (`UInt8("300")` used to yield 44).
+    with assert_raises():
+        _ = from_debug[UInt8]("300")
+    with assert_raises():
+        _ = from_debug[UInt8]("-5")
+    with assert_raises():
+        _ = from_debug[Int8]("200")
+    with assert_raises():
+        _ = from_debug[Int16]("40000")
+    # Boundary values still parse.
+    assert_equal(from_debug[UInt8]("255"), UInt8(255))
+    assert_equal(from_debug[Int8]("-128"), Int8(-128))
+
+
 def test_floats() raises:
     assert_equal(from_debug[Float32]("1.5"), Float32(1.5))
     assert_equal(from_debug[Float64]("-2.25"), Float64(-2.25))
