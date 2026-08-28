@@ -55,8 +55,8 @@ __extension Optional(Serializable):
             s.serialize_none()
 
 
-# Externally tagged: the active arm's tag is its `ArmName` (or its type name
-# as the fallback), the arm's value the payload. `Self.Ts` (the variant's
+# Externally tagged: the active arm's tag is its `arm_name` decorator (or its
+# type name as the fallback), the arm's value the payload. `Self.Ts` (the variant's
 # arm-type pack) is what makes this work — `reflect` can't enumerate variant
 # arms, but the pack can.
 __extension Variant(Serializable):

@@ -29,11 +29,11 @@ from .error import (
     SerializationError,
     SerErrorKind,
 )
-from .field import Defaulted, Field, Rename, Skip
-from .field_meta import FieldMeta, wire_field_names
+from .field import field
+from .field_meta import wire_field_names
 from .struct_modifiers import (
-    ArmName,
-    DenyUnknownFields,
-    RenameAll,
     RenamePolicy,
+    arm_name,
+    deny_unknown_fields,
+    rename_all,
 )

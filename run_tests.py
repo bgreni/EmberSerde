@@ -13,6 +13,10 @@ import sys
 TEST_DIR = "test"
 MOJOC = "emberserde.mojoc"
 
+# Overridable so the suite can be run against a locally built compiler (e.g. the
+# bazel-built mojo-full from the modular monorepo) instead of the pixi env's.
+MOJO = os.environ.get("MOJO", "mojo")
+
 
 def main() -> int:
     # A precompiled emberserde.mojoc shadows the emberserde/ source directory
@@ -37,7 +41,7 @@ def main() -> int:
         print(f"==> {path}")
         result = subprocess.run(
             [
-                "mojo",
+                MOJO,
                 "run",
                 "-D",
                 "ASSERT=all",

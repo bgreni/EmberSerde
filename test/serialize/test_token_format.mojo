@@ -1,8 +1,8 @@
 import emberserde
 from std.testing import assert_equal, TestSuite
 from _token_format import to_tokens
-from emberserde.field import Rename, Skip
-from emberserde.struct_modifiers import RenameAll, RenamePolicy
+from emberserde.field import field
+from emberserde.struct_modifiers import RenamePolicy, rename_all
 
 
 @fieldwise_init
@@ -100,27 +100,30 @@ def test_nested_tuple_wire_form() raises:
     assert_tokens(to_tokens(t), ["1", "x", "2"])
 
 
+@rename_all(RenamePolicy.CamelCase)
 @fieldwise_init
-struct ModifiedRec(Copyable, Defaultable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.CamelCase
+struct ModifiedRec(Copyable, Defaultable, Movable):
     var first_name: Int
-    var user_age: Rename[Int, String("age")]
-    var hidden: Skip[Int]
+
+    @field(rename="age")
+    var user_age: Int
+
+    @field(skip=True)
+    var hidden: Int
+
     var last: Int
 
     def __init__(out self):
         self.first_name = 0
-        self.user_age = Rename[Int, String("age")](value=0)
-        self.hidden = Skip[Int](value=0)
+        self.user_age = 0
+        self.hidden = 0
         self.last = 0
 
 
 def test_modifier_struct_wire_form() raises:
     # Renames never touch the token wire (names aren't written); a skipped
     # field contributes no tokens at all.
-    var r = ModifiedRec(
-        1, Rename[Int, String("age")](value=2), Skip[Int](value=99), 3
-    )
+    var r = ModifiedRec(1, 2, 99, 3)
     assert_tokens(to_tokens(r), ["1", "2", "3"])
 
 

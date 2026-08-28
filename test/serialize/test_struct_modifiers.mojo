@@ -1,65 +1,65 @@
 from std.testing import assert_equal, assert_false, assert_true, TestSuite
 from _debug_format import debug_string
-from emberserde.field import Rename
+from emberserde.field import field
 from emberserde.struct_modifiers import (
-    RenameAll,
     RenamePolicy,
     apply_rename_policy,
+    rename_all,
 )
 
 
+@rename_all(RenamePolicy.SnakeCase)
 @fieldwise_init
-struct SnakeRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.SnakeCase
+struct SnakeRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
 
+@rename_all(RenamePolicy.CamelCase)
 @fieldwise_init
-struct CamelRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.CamelCase
+struct CamelRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
 
+@rename_all(RenamePolicy.PascalCase)
 @fieldwise_init
-struct PascalRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.PascalCase
+struct PascalRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
 
+@rename_all(RenamePolicy.KebabCase)
 @fieldwise_init
-struct KebabRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.KebabCase
+struct KebabRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
 
+@rename_all(RenamePolicy.ScreamingSnakeCase)
 @fieldwise_init
-struct ScreamingSnakeRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.ScreamingSnakeCase
+struct ScreamingSnakeRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
 
+@rename_all(RenamePolicy.ScreamingKebabCase)
 @fieldwise_init
-struct ScreamingKebabRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.ScreamingKebabCase
+struct ScreamingKebabRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
 
+@rename_all(RenamePolicy.LowerCase)
 @fieldwise_init
-struct LowerRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.LowerCase
+struct LowerRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
 
+@rename_all(RenamePolicy.UpperCase)
 @fieldwise_init
-struct UpperRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.UpperCase
+struct UpperRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
@@ -120,17 +120,19 @@ def test_rename_all_upper() raises:
     )
 
 
+@rename_all(RenamePolicy.CamelCase)
 @fieldwise_init
-struct OverrideRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.CamelCase
+struct OverrideRec(Copyable, Movable):
     var first_name: Int
-    var keep_me: Rename[Int, String("kept")]
+
+    @field(rename="kept")
+    var keep_me: Int
 
 
 def test_field_rename_overrides_policy() raises:
     # `first_name` follows the camelCase policy; `keep_me`'s field-level rename
     # wins over it (the policy alone would yield "keepMe").
-    var r = OverrideRec(1, Rename[Int, String("kept")](value=2))
+    var r = OverrideRec(1, 2)
     assert_equal(
         debug_string(r),
         "test_struct_modifiers.OverrideRec { firstName: 1, kept: 2 }",
@@ -139,9 +141,9 @@ def test_field_rename_overrides_policy() raises:
 
 # Fields declared in non-snake_case: the policy must tokenize the declared name
 # rather than assume snake_case input.
+@rename_all(RenamePolicy.SnakeCase)
 @fieldwise_init
-struct CamelDeclRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.SnakeCase
+struct CamelDeclRec(Copyable, Movable):
     var firstName: Int
     var parseHTTPResponse: Int
 
@@ -156,9 +158,9 @@ def test_rename_all_tokenizes_non_snake_input() raises:
     )
 
 
+@rename_all(RenamePolicy.KebabCase)
 @fieldwise_init
-struct PascalDeclRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.KebabCase
+struct PascalDeclRec(Copyable, Movable):
     var FirstName: Int
     var age: Int
 

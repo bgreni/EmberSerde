@@ -9,11 +9,11 @@ from std.utils import Variant
 from _json_format import from_json, to_json, JsonValue, JsonDeserializer
 from emberserde.deserialize import Deserializer, SelfDescribingDeserializer
 from emberserde.error import DerErrorKind
-from emberserde.field import Rename
+from emberserde.field import field
 from emberserde.struct_modifiers import (
-    RenameAll,
     RenamePolicy,
-    DenyUnknownFields,
+    deny_unknown_fields,
+    rename_all,
 )
 
 
@@ -47,21 +47,23 @@ struct Outer(Copyable, Defaultable, Movable):
         self.inner = Point()
 
 
+@deny_unknown_fields
 @fieldwise_init
-struct Strict(Copyable, DenyUnknownFields, Movable):
+struct Strict(Copyable, Movable):
     var a: Int
 
 
+@rename_all(RenamePolicy.CamelCase)
 @fieldwise_init
-struct CamelRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.CamelCase
+struct CamelRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
 
 @fieldwise_init
 struct Renamed(Copyable, Movable):
-    var keep_me: Rename[Int, String("kept")]
+    @field(rename="kept")
+    var keep_me: Int
 
 
 def test_primitives() raises:
@@ -167,7 +169,7 @@ def test_rename_all_matches_wire() raises:
 
 def test_field_rename_matches_wire() raises:
     var r = from_json[Renamed]('{"kept":2}')
-    assert_equal(r.keep_me.value, 2)
+    assert_equal(r.keep_me, 2)
 
 
 def test_tuple() raises:

@@ -195,7 +195,7 @@ struct DebugSerializer[origin: MutOrigin](Serializer):
         self.out[] += "("
         return DebugTuple(out=self.out, first=True)
 
-    # Rust-`Debug`-style: render the active arm as `ArmName(payload)`, mirroring
+    # Rust-`Debug`-style: render the active arm as `<tag>(payload)`, mirroring
     # how a present `Optional` renders as `Some(payload)`.
     def begin_enum[
         name: String, variant: String

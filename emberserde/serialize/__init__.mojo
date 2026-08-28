@@ -1,4 +1,5 @@
 from emberserde.utils import unimplemented, Base
+from std.builtin.rebind import downcast, rebind
 from std.reflection import (
     reflect,
 )
@@ -9,6 +10,7 @@ from emberserde.field_meta import (
     static_wire_name,
     visible_fields,
     is_skipped,
+    should_skip_if,
     has_unique_wire_names,
 )
 
@@ -117,6 +119,15 @@ trait Serializer:
     ) raises SerializationError -> Self.MapType:
         ...
 
+    # `field_count` is a static UPPER BOUND, not an exact count: a
+    # `@field(skip_if=...)` field's presence depends on its runtime value, so
+    # the true visible-field count for a given record can be smaller than
+    # `field_count` says. Self-describing formats may ignore it, like
+    # `size_hint` above; a binary format that writes a length prefix from it
+    # MUST NOT treat it as authoritative — count the fields it actually
+    # receives via `StructSerState.serialize_field` instead (e.g. by
+    # buffering, or by writing the prefix after `end()`), or it will
+    # mis-frame any struct using `skip_if`.
     def begin_struct[
         name: String
     ](mut self, field_count: Int) raises SerializationError -> Self.StructType:
@@ -128,13 +139,13 @@ trait Serializer:
         ...
 
     # Externally-tagged sum type. `name` is the enum type's name; `variant` is
-    # the active arm's tag (its `ArmName`, or its canonical type name as the
-    # fallback); `idx` is the arm's position (the discriminant a binary format
-    # would write). Self-describing formats key on `variant`; non-self-
-    # describing formats key on `idx`. `idx` is the stable default for real
-    # formats — a fallback name tag embeds module paths and stdlib spellings,
-    # so it is best treated as debug/diagnostic unless every arm declares an
-    # `ArmName`.
+    # the active arm's tag (its `arm_name` decorator, or its canonical type
+    # name as the fallback); `idx` is the arm's position (the discriminant a
+    # binary format would write). Self-describing formats key on `variant`;
+    # non-self-describing formats key on `idx`. `idx` is the stable default
+    # for real formats — a fallback name tag embeds module paths and stdlib
+    # spellings, so it is best treated as debug/diagnostic unless every arm
+    # declares an `arm_name`.
     def begin_enum[
         name: String, variant: String
     ](mut self, idx: UInt32) raises SerializationError -> Self.EnumType:
@@ -191,24 +202,30 @@ trait Serializer:
         )
 
         comptime field_count = r.field_count()
-        comptime field_names = r.field_names()
 
-        # `Field`-wrapped members may rename themselves or drop out entirely
+        # A `@field(...)` member may rename itself or drop out entirely
         # (`skip`), so the emitted count can be smaller than the struct's.
+        # This is a static upper bound only — see `visible_fields`'s
+        # docstring for why a `@field(skip_if=...)` field is not (and cannot
+        # be) reflected in it.
         comptime visible = visible_fields[T]()
 
         var state = self.begin_struct[r.name()](visible)
 
         comptime for i in range(field_count):
-            comptime FT = r.field_types()[i]
-            comptime if not is_skipped[FT]():
-                # Index at comptime so only the one name materializes, not the
-                # whole (non-ImplicitlyCopyable) field-names array.
-                comptime declared_name = field_names[i]
-                state.serialize_field(
-                    static_wire_name[T, FT, declared_name](),
-                    r.field_ref[i](v),
-                )
+            comptime if not is_skipped[T, i]():
+                # `field_ref[i]` reports its result at the same `AnyType`
+                # erasure `field_types()` carries; `should_skip_if` needs the
+                # `Base` bound to accept the predicate's argument, so rebind
+                # it through the same `downcast` the deserialize side already
+                # uses for the identical reason (`expect_struct`'s `FT`).
+                comptime FT = downcast[r.field_types()[i], Base]
+                ref field_value = rebind[FT](r.field_ref[i](v))
+                if not should_skip_if[T, i](field_value):
+                    state.serialize_field(
+                        static_wire_name[T, i](),
+                        field_value,
+                    )
 
         state.end()
 

@@ -5,12 +5,13 @@ from .impls import *
 from .borrow import BorrowingDeserializer, RawKind
 from emberserde.error import DeserializationError, DerErrorKind
 from emberserde.field_meta import (
-    FieldMeta,
-    __is_optional,
+    field_dec,
+    fill_if_missing,
+    has_default,
     has_unique_wire_names,
     name_matches,
 )
-from emberserde.struct_modifiers import RenameAll, DenyUnknownFields
+from emberserde.struct_modifiers import deny_unknown_fields
 from emberserde.utils import Base
 
 
@@ -21,17 +22,6 @@ def _all_dtors_are_trivial[T: AnyType]() -> Bool:
         if not downcast[type, Deinitable].__del__is_trivial:
             return False
     return True
-
-
-# May field `i` be absent from the wire? `Optional` always; a `Field` when it is
-# skipped or carries a default. Everything else is required.
-def _fill_if_missing[FT: AnyType]() -> Bool:
-    comptime if __is_optional[FT]():
-        return True
-    elif conforms_to(FT, FieldMeta):
-        return downcast[FT, FieldMeta].serde_fill_if_missing
-    else:
-        return False
 
 
 # Parse a numeric token into `Scalar[DT]`, raising instead of silently
@@ -122,8 +112,8 @@ trait StructDerState(Deinitable):
     # the closing delimiter — that is `end`'s job). Self-describing formats
     # read the name off the wire; non-self-describing formats serve
     # `wire_field_names[T]()` (wire names of non-skipped fields, declaration
-    # order — NOT declared names, which diverge under `Rename`/`RenameAll`/
-    # `Skip` and would fall through to `skip_value`).
+    # order — NOT declared names, which diverge under `@field(rename=...)`/
+    # `rename_all`/`@field(skip=True)` and would fall through to `skip_value`).
     def expect_field_name(
         mut self,
     ) raises DeserializationError -> Optional[String]:
@@ -263,9 +253,7 @@ trait Deserializer:
                 # Index at comptime so only the one name materializes, not the
                 # whole (non-ImplicitlyCopyable) field-names array.
                 comptime declared_name = names[i]
-                if not matched and name_matches[
-                    T, r.field_types()[i], declared_name
-                ](name):
+                if not matched and name_matches[T, i](name):
                     if seen[i]:
                         raise DeserializationError(
                             String(t"duplicate field: {declared_name}"),
@@ -286,7 +274,7 @@ trait Deserializer:
                     else:
                         r.field_ref[i](result) = st.expect_field_value[FT]()
             if not matched:
-                comptime if conforms_to(T, DenyUnknownFields):
+                comptime if reflect[T].has_decorator[deny_unknown_fields]():
                     raise DeserializationError(
                         String(t"Unknown field: {name}"),
                         DerErrorKind.UnknownField,
@@ -297,12 +285,16 @@ trait Deserializer:
         comptime for i in range(r.field_count()):
             comptime declared_name = names[i]
             if not seen[i]:
-                comptime if _fill_if_missing[r.field_types()[i]]():
-                    comptime if conforms_to(r.field_types()[i], FieldMeta):
-                        # `Field` fills through its own hook so an explicit
-                        # `default` works without `T` being Defaultable.
-                        comptime FMT = downcast[r.field_types()[i], FieldMeta]
-                        r.field_ref[i](result) = FMT.serde_filled()
+                comptime if fill_if_missing[T, i]():
+                    ref f = r.field_ref[i](result)
+                    # An explicit `@field(default=...)` value wins over
+                    # `fill_if_missing`'s bare default-construct — see
+                    # `field_meta.mojo`'s `has_default` and `fill_if_missing`
+                    # docstrings for the full precedence (skip still implies
+                    # fill either way).
+                    comptime if has_default[T, i]():
+                        comptime dec = field_dec[T, i]
+                        f = materialize[dec.value().default.value()]()
                     else:
                         comptime assert conforms_to(
                             r.field_types()[i], Base & Defaultable
@@ -310,7 +302,6 @@ trait Deserializer:
                             "Missing field must be Defaulable & Movable &"
                             " Deinitable"
                         )
-                        ref f = r.field_ref[i](result)
                         f = type_of(f)()
                 else:
                     raise DeserializationError(
