@@ -4,12 +4,46 @@ channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
 name = "emberserde"
 platforms = ["osx-arm64", "linux-aarch64", "linux-64"]
 version = "0.1.0"
+description = "A format-agnostic serialization framework for Mojo"
+license = "Apache-2.0"
+license-file = "LICENSE"
+homepage = "https://github.com/bgreni/EmberSerde"
+repository = "https://github.com/bgreni/EmberSerde"
+preview = ["pixi-build"]
+# The pixi-build-mojo backends that emit `.mojoc` (see [package.build]) need
+# build-api-version 7, which pixi only started providing in 0.77.
+requires-pixi = ">=0.77"
 
 [tasks]
 format = "mojo format -l 80 ."
 test = "python3 run_tests.py"
 build = "mojo precompile emberserde -o emberserde.mojoc"
-precommit = { depends-on = ["format", "test"] }
+check_mojo_pins = "python3 check_mojo_pins.py"
+package = "pixi publish --path . --target-dir ."
+precommit = { depends-on = ["format", "check_mojo_pins", "test"] }
 
 [dependencies]
-mojo = ">=1.0.0b3.dev2026061606,<2"
+mojo = ">=1.1.0.dev2026082905,<2"
+
+[package]
+name = "emberserde"
+version = "0.1.0"
+
+[package.build]
+# Backends before 0.2.6 hardcode `mojo package ... -o ....mojopkg`; 0.2.6 is the
+# first that probes for the `mojo precompile`/`.mojoc` rename, so anything older
+# fails outright against a Mojo 1.x compiler.
+backend = { name = "pixi-build-mojo", version = ">=0.2.6,<0.3" }
+
+# `mojo-compiler` is spelled out again in both sections below because pixi.toml
+# has no variable interpolation. `pixi run check_mojo_pins` fails if either one
+# drifts from the `mojo` spec in [dependencies]. Only these two sections are
+# needed: build-dependencies puts the compiler on PATH for the build script, and
+# run-dependencies is what consumers resolve against (a `.mojoc` is tied to the
+# compiler that produced it). host-dependencies buys nothing for a pure-Mojo
+# library — nothing links against the compiler.
+[package.build-dependencies]
+mojo-compiler = ">=1.1.0.dev2026082905,<2"
+
+[package.run-dependencies]
+mojo-compiler = ">=1.1.0.dev2026082905,<2"

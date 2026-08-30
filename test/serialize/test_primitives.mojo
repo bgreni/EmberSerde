@@ -33,6 +33,17 @@ def test_simd() raises:
     # Multi-lane SIMD serializes as a tuple (lane count is comptime, no length
     # token), so the debug format renders it with parens.
     assert_equal(debug_string(SIMD[DType.int32, 4](1, 2, 3, 4)), "(1, 2, 3, 4)")
+
+
+# `DType.bool` must emit a boolean, not a stringified number. Routing it
+# through `serialize_number` yields `True`, which is not valid in any format
+# whose boolean literal is lowercase.
+def test_simd_bool_writes_a_boolean() raises:
+    assert_equal(debug_string(SIMD[DType.bool, 1](True)), "true")
+    assert_equal(debug_string(SIMD[DType.bool, 1](False)), "false")
+    assert_equal(
+        debug_string(SIMD[DType.bool, 2](True, False)), "(true, false)"
+    )
     assert_equal(
         debug_string(SIMD[DType.float64, 2](1.5, -2.25)), "(1.5, -2.25)"
     )

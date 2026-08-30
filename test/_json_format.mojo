@@ -32,8 +32,10 @@ from emberserde.serialize import (
     serialize,
 )
 from emberserde.deserialize import (
+    BorrowingDeserializer,
     Deserializer,
     Deserializable,
+    RawKind,
     SelfDescribingDeserializer,
     SeqDerState,
     MapDerState,
@@ -492,6 +494,57 @@ struct JsonCursor(Movable):
             else:
                 self.advance()
 
+    # --- borrowing support -------------------------------------------------
+    # These consume a token without building a `String`, so `raw_bytes` can
+    # hand back a span aliasing `buf`.
+
+    def raw_span(self, start: Int, end: Int) -> Span[Byte, ImmUntrackedOrigin]:
+        # Origin-erased at the trait boundary; the borrowing type re-ties it.
+        return rebind[Span[Byte, ImmUntrackedOrigin]](
+            self.buf.as_bytes()[start:end]
+        )
+
+    # Opening quote NOT yet consumed; consumes through the closing quote.
+    def skip_string_token(mut self) raises DeserializationError:
+        self.advance()
+        while True:
+            if self.at_end():
+                raise _invalid(String("unterminated string"))
+            var c = self.peek()
+            self.advance()
+            if c == ord('"'):
+                return
+            if c == ord("\\"):
+                if self.at_end():
+                    raise _invalid(String("unterminated escape"))
+                self.advance()
+
+    def skip_number_token[
+        integer_only: Bool
+    ](mut self) raises DeserializationError:
+        var start = self.pos
+        var fractional = False
+        while not self.at_end():
+            var c = self.peek()
+            var numeric = (
+                c == ord("-")
+                or c == ord("+")
+                or c == ord(".")
+                or c == ord("e")
+                or c == ord("E")
+                or (c >= ord("0") and c <= ord("9"))
+            )
+            if not numeric:
+                break
+            if c == ord(".") or c == ord("e") or c == ord("E"):
+                fractional = True
+            self.advance()
+        if self.pos == start:
+            raise _mismatch(String("expected a number"))
+        comptime if integer_only:
+            if fractional:
+                raise _mismatch(String("expected an integer"))
+
     # Skip one whole value: scan to the next `,`/`}`/`]` at depth zero,
     # balancing brackets/braces and jumping over strings (with escapes).
     def skip_json_value(mut self):
@@ -647,7 +700,9 @@ struct JsonEnumDe[origin: MutOrigin](EnumDerState):
 
 
 @fieldwise_init
-struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
+struct JsonDeserializer[origin: MutOrigin](
+    BorrowingDeserializer, SelfDescribingDeserializer
+):
     var cursor: Pointer[JsonCursor, Self.origin]
 
     comptime SeqType = JsonSeqDe[Self.origin]
@@ -748,6 +803,36 @@ struct JsonDeserializer[origin: MutOrigin](SelfDescribingDeserializer):
             if idx == -1 and name == an:
                 idx = i
         return JsonEnumDe(cursor=self.cursor, idx=idx)
+
+    # Mirrors EmberJson's six `expect_*_bytes` parser entry points: one
+    # validated skip, specialised by the kind the caller demands. The span
+    # is the token exactly as written, so a string keeps its quotes.
+    def raw_bytes[
+        kind: RawKind
+    ](mut self) raises DeserializationError -> Span[Byte, ImmUntrackedOrigin]:
+        self.cursor[].skip_ws()
+        var start = self.cursor[].pos
+
+        comptime if kind == RawKind.Str:
+            if self.cursor[].peek() != ord('"'):
+                raise _mismatch(String("expected a string"))
+            self.cursor[].skip_string_token()
+        elif kind == RawKind.Integer:
+            self.cursor[].skip_number_token[True]()
+        elif kind == RawKind.Float:
+            self.cursor[].skip_number_token[False]()
+        else:
+            comptime if kind == RawKind.Seq:
+                if self.cursor[].peek() != ord("["):
+                    raise _mismatch(String("expected an array"))
+            elif kind == RawKind.Map:
+                if self.cursor[].peek() != ord("{"):
+                    raise _mismatch(String("expected an object"))
+            if self.cursor[].at_end():
+                raise _invalid(String("expected a JSON value"))
+            self.cursor[].skip_json_value()
+
+        return self.cursor[].raw_span(start, self.cursor[].pos)
 
     # `expect_struct` is intentionally NOT implemented: the framework's
     # reflection-driven default on `Deserializer` drives the framing above.

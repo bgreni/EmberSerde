@@ -61,6 +61,27 @@ def test_simd() raises:
     )
 
 
+# `DType.bool` is the one dtype that is not a number on the wire: it rides as a
+# boolean, exactly as plain `Bool` does. Reading it through `expect_number`
+# would reject `true` and silently accept `1`.
+def test_simd_bool_reads_a_boolean() raises:
+    assert_equal(
+        from_debug[SIMD[DType.bool, 1]]("true"), SIMD[DType.bool, 1](True)
+    )
+    assert_equal(
+        from_debug[SIMD[DType.bool, 1]]("false"), SIMD[DType.bool, 1](False)
+    )
+    assert_equal(
+        from_debug[SIMD[DType.bool, 2]]("(true, false)"),
+        SIMD[DType.bool, 2](True, False),
+    )
+
+
+def test_simd_bool_rejects_a_number() raises:
+    with assert_raises():
+        _ = from_debug[SIMD[DType.bool, 1]]("1")
+
+
 def test_string() raises:
     assert_equal(from_debug[String]('"hello"'), String("hello"))
     assert_equal(from_debug[String]('""'), String(""))

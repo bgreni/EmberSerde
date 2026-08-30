@@ -11,11 +11,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-pixi run test          # run all tests (python3 run_tests.py)
-pixi run format        # mojo format -l 80 .
-pixi run build         # mojo precompile emberserde -o emberserde.mojoc
-pixi run precommit     # format + test
+pixi run test            # run all tests (python3 run_tests.py)
+pixi run format          # mojo format -l 80 .
+pixi run build           # mojo precompile emberserde -o emberserde.mojoc
+pixi run check_mojo_pins # assert the three mojo version specs in pixi.toml agree
+pixi run package         # build the distributable .conda into the repo root
+pixi run precommit       # format + check_mojo_pins + test
 ```
+
+**pixi >= 0.77 is required** (`requires-pixi` in the manifest enforces it, so an
+older pixi refuses every command with a pointer to `pixi self-update`). The
+`pixi-build-mojo` backends that emit `.mojoc` need build-api-version 7, which
+pixi first provides in 0.77.
 
 Run a single test file directly (this is what `run_tests.py` does per file):
 
@@ -28,6 +35,27 @@ mojo run -D ASSERT=all -I . -I test test/serialize/test_primitives.mojo
 **Add coverage to the existing test file that already owns the topic — don't spin up a new `test_*.mojo` per type.** The files are organized by data-model category, not by type: collection types (`List`, `Array`, `Set`, ...) go in `test_seq.mojo`, key/value types in `test_map.mojo`, etc. A new test file is only warranted when a genuinely new category appears that no existing file covers.
 
 Deserialize tests feed **hand-written wire literals** (not serializer output) so a symmetric encode/decode bug can't round-trip past the assertion — the literal pins the actual wire form on its own.
+
+## Distribution
+
+`pixi.toml` carries a `[package]` section wired to the `pixi-build-mojo`
+backend, so other Mojo projects consume this repo straight from git:
+
+```toml
+[dependencies]
+emberserde = { git = "https://github.com/bgreni/EmberSerde.git", branch = "main" }
+```
+
+pixi clones the repo, runs `mojo precompile` on `emberserde/` inside an isolated
+build environment, and installs the resulting `emberserde.mojoc` into the
+consumer's env — no `-I` path juggling on their side.
+
+A `.mojoc` is tied to the compiler that produced it, so `[package.run-dependencies]`
+must keep pinning `mojo-compiler`. pixi.toml has no variable interpolation, so
+that spec is written out three times (workspace `mojo`, package build- and
+run-dependencies); `check_mojo_pins.py` is the guard against them drifting apart.
+`[package.host-dependencies]` is deliberately absent — nothing links against the
+compiler, so for a pure-Mojo library it buys nothing.
 
 ## Writing Mojo
 

@@ -2,6 +2,7 @@ from std.builtin.rebind import downcast
 from std.reflection import reflect
 
 from .impls import *
+from .borrow import BorrowingDeserializer, RawKind
 from emberserde.error import DeserializationError, DerErrorKind
 from emberserde.field_meta import (
     FieldMeta,

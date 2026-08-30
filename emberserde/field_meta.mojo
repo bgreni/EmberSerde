@@ -33,7 +33,7 @@ trait FieldMeta(Deinitable, Movable):
 # test should replace this when the stdlib grows one — same mechanism as the
 # `Span` byte specialization.)
 def __is_optional[T: AnyType]() -> Bool:
-    return reflect[T].name().startswith("std.collections.optional.Optional[")
+    return reflect[T].base_name() == "Optional"
 
 
 # The declared name reshaped by the struct's `rename_all` policy, or unchanged

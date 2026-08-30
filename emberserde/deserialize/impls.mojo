@@ -35,7 +35,14 @@ __extension SIMD(Deserializable):
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
         comptime if Self.length == 1:
-            return d.expect_number[Self.dtype]()
+            # `DType.bool` is the one dtype that is not a number in the data
+            # model -- it rides the wire as a boolean, exactly as plain `Bool`
+            # does. Sending it through `expect_number` rejects `true` and
+            # silently accepts `1`.
+            comptime if Self.dtype == DType.bool:
+                return rebind[Self](Scalar[DType.bool](d.expect_bool()))
+            else:
+                return d.expect_number[Self.dtype]()
         else:
             var result = Self()
             var tup = d.begin_tuple[Self.length]()
@@ -346,7 +353,7 @@ __extension Tuple(Deserializable):
             Defaultable
         ](), "Tuple deserialize requires Defaultable elements"
         var result = Self()
-        
+
         @parameter
         def dispose[idx: Int](var elt: Self.element_types[idx]):
             _ = rebind_var[downcast[Self.element_types[idx], Base]](elt^)

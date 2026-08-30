@@ -23,7 +23,13 @@ __extension String(Serializable):
 __extension SIMD(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
         comptime if Self.length == 1:
-            s.serialize_number(rebind[Scalar[Self.dtype]](self))
+            # See the matching branch in `deserialize/impls.mojo`: a
+            # boolean-dtype scalar must emit a boolean, not a stringified
+            # number (`serialize_number` would render it as `True`).
+            comptime if Self.dtype == DType.bool:
+                s.serialize_bool(Bool(rebind[Scalar[DType.bool]](self)))
+            else:
+                s.serialize_number(rebind[Scalar[Self.dtype]](self))
         else:
             var tup = s.begin_tuple[Self.length]()
             for i in range(Self.length):

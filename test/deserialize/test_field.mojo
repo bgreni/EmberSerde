@@ -4,9 +4,10 @@ from emberserde.error import DerErrorKind
 from emberserde.field import Defaulted, Field, Rename, Skip
 
 
-# Shadows the prelude name on purpose: a user type merely *named* `Optional`
-# must NOT inherit absence-tolerance (`__is_optional` matches the qualified
-# stdlib name, not the base name).
+# Shadows the prelude name on purpose. `__is_optional` matches on `base_name`,
+# which survives stdlib module moves that would break a fully-qualified path.
+# The accepted cost of that stability: a user type merely *named* `Optional`
+# also inherits absence-tolerance, and is default-filled when the wire omits it.
 @fieldwise_init
 struct Optional(Copyable, Defaultable, Movable):
     var x: Int
@@ -21,13 +22,10 @@ struct FakeOptRec(Copyable, Movable):
     var o: Optional
 
 
-def test_user_type_named_optional_is_required() raises:
-    var raised = False
-    try:
-        _ = from_debug[FakeOptRec]("FakeOptRec { a: 1 }")
-    except e:
-        raised = True
-    assert_true(raised)
+def test_user_type_named_optional_is_absence_tolerant() raises:
+    var r = from_debug[FakeOptRec]("FakeOptRec { a: 1 }")
+    assert_equal(r.a, 1)
+    assert_equal(r.o.x, 0)
 
 
 # Hand-written wire literals (per CLAUDE.md). A bare `Field` reads as its inner
