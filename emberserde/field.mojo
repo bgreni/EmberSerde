@@ -67,6 +67,10 @@ struct Field[
     def __init__(out self, var value: Self.T):
         self.value = value^
 
+    @always_inline
+    def __getitem__(ref self) -> ref[self.value] Self.T:
+        return self.value
+
     @staticmethod
     def serde_filled() -> Self:
         return Self()

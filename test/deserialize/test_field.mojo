@@ -93,8 +93,8 @@ def test_defaulted_non_defaultable_fills() raises:
     # must be enough to fill the missing field.
     var r = from_debug[Rec3]("Rec3 { a: 1 }")
     assert_equal(r.a, 1)
-    assert_equal(r.p.value.x, 3)
-    assert_equal(r.p.value.y, 4)
+    assert_equal(r.p[].x, 3)
+    assert_equal(r.p[].y, 4)
 
 
 def main() raises:

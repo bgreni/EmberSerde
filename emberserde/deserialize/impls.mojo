@@ -349,22 +349,22 @@ __extension Tuple(Deserializable):
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
         var state = d.begin_tuple[Self.__len__()]()
-        comptime assert Self.element_types.all_conforms_to[
+        comptime assert Self.Ts.all_conforms_to[
             Defaultable
         ](), "Tuple deserialize requires Defaultable elements"
         var result = Self()
 
-        @parameter
-        def dispose[idx: Int](var elt: Self.element_types[idx]):
-            _ = rebind_var[downcast[Self.element_types[idx], Base]](elt^)
+        @__parameter
+        def dispose[idx: Int](var elt: Self.Ts[idx]):
+            _ = rebind_var[downcast[Self.Ts[idx], Base]](elt^)
 
         var filled = 0
         try:
             comptime for i in range(Self.__len__()):
                 comptime assert conforms_to(
-                    Self.element_types[i], Base
+                    Self.Ts[i], Base
                 ), "Tuple deserialize requires Movable, Deinitable elements"
-                comptime ET = downcast[Self.element_types[i], Base]
+                comptime ET = downcast[Self.Ts[i], Base]
                 result[i] = state.expect_element[ET]()
                 filled += 1
 
