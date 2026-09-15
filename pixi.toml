@@ -23,7 +23,7 @@ package = "pixi publish --path . --target-dir ."
 precommit = { depends-on = ["format", "check_mojo_pins", "test"] }
 
 [dependencies]
-mojo = ">=1.1.0.dev2026082905,<2"
+mojo = ">=1.2.0.dev2026091505,<2"
 
 [package]
 name = "emberserde"

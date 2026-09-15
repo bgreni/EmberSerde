@@ -1,6 +1,3 @@
-# The public façade: one import path for consumers (`from emberserde import
-# Serializer, deserialize, ...`). Formats and advanced users can still reach
-# into the submodules for the state traits and helpers not re-exported here.
 from .serialize import (
     Serializable,
     Serializer,

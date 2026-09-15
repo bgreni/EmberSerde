@@ -1,7 +1,8 @@
-from std.testing import assert_equal, assert_true, TestSuite
+from std.testing import assert_equal, assert_true, TestSuite, assert_raises
 from _debug_format import from_debug
 from emberserde.error import DerErrorKind
 from emberserde.field import Defaulted, Field, Rename, Skip
+from emberserde.error import DeserializationError
 
 
 # Shadows the prelude name on purpose. `__is_optional` matches on `base_name`,
@@ -96,6 +97,19 @@ def test_defaulted_non_defaultable_fills() raises:
     assert_equal(r.p[].x, 3)
     assert_equal(r.p[].y, 4)
 
+
+# comptime Validated = Field[Int, validate= lambda (x : Int) -> Bool: x > 0]
+
+# def test_validate() raises:
+#     var r = from_debug[Validated]("Validated { value: 5 }")
+#     assert_equal(r.value, 5)
+#     with assert_raises():
+#         _ = from_debug[Validated]("Validated { value: -1 }")
+
+    # This won't work until we can do conditional raises since I don't
+    # want to burden this ctor with always raising.
+    # with assert_raises():
+    #     _ = Validated(-1)
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

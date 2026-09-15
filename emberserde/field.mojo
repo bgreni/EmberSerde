@@ -27,12 +27,9 @@ struct Field[
     skip: Bool = False,
     # skip_if: def(T) -> Bool = __just_true[T],
     default: Optional[T] = None,
+    validate: Optional[def(T) thin -> Bool] = None
 ](
     Copyable where conforms_to(T, Copyable),
-    # NOTE: extending this clause to `... or Bool(default)` (any spelling)
-    # crashes the compiler when a `Skip` field's fill queries the conformance;
-    # the missing-field fill goes through `serde_filled` instead, which needs
-    # no `Defaultable` conformance at all.
     Defaultable where conforms_to(T, Defaultable),
     Deserializable,
     FieldMeta,
@@ -56,7 +53,7 @@ struct Field[
         comptime if Self.default:
             self.value = materialize[Self.default.value()]()
         elif conforms_to(Self.T, Defaultable):
-            self.value = Self.T()
+            self.value = {}
         else:
             comptime assert False, (
                 "Cannot default construct with type that is not defaultable,"
@@ -81,5 +78,10 @@ struct Field[
     @staticmethod
     def deserialize(
         mut d: Some[Deserializer],
-    ) raises DeserializationError -> Self:
-        return {deserialize[Self.T](d)}
+        out s: Self
+    ) raises DeserializationError:
+        s = {deserialize[Self.T](d)}
+
+        comptime if Self.validate:
+            if not Self.validate.value()(s.value):
+                raise DeserializationError("Validation failed", .InvalidValue)
