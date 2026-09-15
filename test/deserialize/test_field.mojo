@@ -98,13 +98,13 @@ def test_defaulted_non_defaultable_fills() raises:
     assert_equal(r.p[].y, 4)
 
 
-# comptime Validated = Field[Int, validate= lambda (x : Int) -> Bool: x > 0]
+comptime Validated = Field[Int, validate= lambda (x : Int) -> Bool: x > 0]
 
-# def test_validate() raises:
-#     var r = from_debug[Validated]("Validated { value: 5 }")
-#     assert_equal(r.value, 5)
-#     with assert_raises():
-#         _ = from_debug[Validated]("Validated { value: -1 }")
+def test_validate() raises:
+    var r = from_debug[Validated]("5")
+    assert_equal(r.value, 5)
+    with assert_raises():
+        _ = from_debug[Validated]("-1")
 
     # This won't work until we can do conditional raises since I don't
     # want to burden this ctor with always raising.

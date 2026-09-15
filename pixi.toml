@@ -23,7 +23,13 @@ package = "pixi publish --path . --target-dir ."
 precommit = { depends-on = ["format", "check_mojo_pins", "test"] }
 
 [dependencies]
-mojo = ">=1.2.0.dev2026091505,<2"
+# Pinned to the 1.1.0 release candidate instead of tracking nightlies. Exact,
+# not a range: the run-dependency below is what consumers resolve against, and
+# a range there lets them install a compiler that cannot load the `.mojoc`
+# this build produces. Note that conda orders `1.1.0rc0` BELOW every
+# `1.1.0.dev*` nightly, so the old `>=1.1.0.dev2026082905` floor excluded the
+# release candidate outright -- a range cannot express "the RC or newer".
+mojo = "==1.1.0rc0"
 
 [package]
 name = "emberserde"
@@ -43,7 +49,7 @@ backend = { name = "pixi-build-mojo", version = ">=0.2.6,<0.3" }
 # compiler that produced it). host-dependencies buys nothing for a pure-Mojo
 # library — nothing links against the compiler.
 [package.build-dependencies]
-mojo-compiler = ">=1.1.0.dev2026082905,<2"
+mojo-compiler = "==1.1.0rc0"
 
 [package.run-dependencies]
-mojo-compiler = ">=1.1.0.dev2026082905,<2"
+mojo-compiler = "==1.1.0rc0"

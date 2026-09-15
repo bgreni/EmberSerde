@@ -27,7 +27,8 @@ struct Field[
     skip: Bool = False,
     # skip_if: def(T) -> Bool = __just_true[T],
     default: Optional[T] = None,
-    validate: Optional[def(T) thin -> Bool] = None
+    # compiler will prune this default away so no runtime cost
+    validate: def(T) thin -> Bool = __just_true[T]
 ](
     Copyable where conforms_to(T, Copyable),
     Defaultable where conforms_to(T, Defaultable),
@@ -82,6 +83,5 @@ struct Field[
     ) raises DeserializationError:
         s = {deserialize[Self.T](d)}
 
-        comptime if Self.validate:
-            if not Self.validate.value()(s.value):
-                raise DeserializationError("Validation failed", .InvalidValue)
+        if not Self.validate(s.value):
+            raise DeserializationError("Validation failed", .InvalidValue)
