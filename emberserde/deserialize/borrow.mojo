@@ -22,12 +22,6 @@ struct RawKind(Equatable, ImplicitlyCopyable, Writable):
     comptime Seq = Self(4)
     comptime Map = Self(5)
 
-    def __eq__(self, other: Self) -> Bool:
-        return self._kind == other._kind
-
-    def __ne__(self, other: Self) -> Bool:
-        return self._kind != other._kind
-
     def write_to(self, mut writer: Some[Writer]):
         if self == Self.Any:
             writer.write("Any")

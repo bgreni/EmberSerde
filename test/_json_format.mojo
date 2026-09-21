@@ -50,6 +50,7 @@ from emberserde.error import (
     DeserializationError,
     DerErrorKind,
 )
+from emberserde.field_meta import field_index
 from emberserde.utils import Base
 
 
@@ -122,7 +123,9 @@ struct JsonStructSer[origin: MutOrigin](StructSerState):
     var out: Pointer[String, Self.origin]
     var first: Bool
 
-    def serialize_field(
+    def serialize_field[
+        T: AnyType, idx: Int
+    ](
         mut self, field_name: StringSlice, v: Some[AnyType]
     ) raises SerializationError:
         if not self.first:
@@ -215,7 +218,7 @@ struct JsonSerializer[origin: MutOrigin](Serializer):
         return JsonMapSer(out=self.out, first=True)
 
     def begin_struct[
-        name: String
+        T: AnyType
     ](mut self, field_count: Int) raises SerializationError -> Self.StructType:
         # Unlike the debug format, JSON does not write the struct name.
         self.out[] += "{"
@@ -228,7 +231,7 @@ struct JsonSerializer[origin: MutOrigin](Serializer):
         return JsonTupleSer(out=self.out, first=True)
 
     def begin_enum[
-        name: String, variant: String
+        T: AnyType, variant: String
     ](mut self, idx: UInt32) raises SerializationError -> Self.EnumType:
         self.out[] += "{"
         _write_quoted(self.out[], variant)
@@ -631,9 +634,9 @@ struct JsonMapDe[origin: MutOrigin](MapDerState):
 struct JsonStructDe[origin: MutOrigin](StructDerState):
     var cursor: Pointer[JsonCursor, Self.origin]
 
-    def expect_field_name(
-        mut self,
-    ) raises DeserializationError -> Optional[String]:
+    def expect_field_index[
+        T: AnyType
+    ](mut self) raises DeserializationError -> Optional[Int]:
         self.cursor[].skip_ws()
         if self.cursor[].peek() == ord("}"):
             # End of struct: leave the `}` for `end()` to consume.
@@ -646,7 +649,7 @@ struct JsonStructDe[origin: MutOrigin](StructDerState):
         self.cursor[].skip_ws()
         self.cursor[].expect_lit(":")
         self.cursor[].skip_ws()
-        return name^
+        return field_index[T](name)
 
     def expect_field_value[
         T: AnyType
@@ -730,6 +733,11 @@ struct JsonDeserializer[origin: MutOrigin](
         if tok.byte_length() == 0:
             raise _mismatch(String("expected a number"))
         return checked_scalar[DT](tok)
+
+    # `serialize_bytes` writes a plain array of numbers, so the seq path
+    # already reads it.
+    def expect_bytes(mut self) raises DeserializationError -> List[Byte]:
+        return deserialize[List[Byte]](self)
 
     def expect_string(mut self) raises DeserializationError -> String:
         self.cursor[].skip_ws()

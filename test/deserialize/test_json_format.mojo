@@ -7,8 +7,12 @@ from std.testing import (
 )
 from std.utils import Variant
 from _json_format import from_json, to_json, JsonValue, JsonDeserializer
-from emberserde.deserialize import Deserializer, SelfDescribingDeserializer
-from emberserde.error import DerErrorKind
+from emberserde.deserialize import (
+    Deserializable,
+    Deserializer,
+    SelfDescribingDeserializer,
+)
+from emberserde.error import DerErrorKind, DeserializationError
 from emberserde.field import Rename
 from emberserde.struct_modifiers import (
     RenameAll,
@@ -155,7 +159,7 @@ def test_struct_duplicate_field_raises() raises:
 
 
 def test_deny_unknown_fields_raises() raises:
-    with assert_raises():
+    with assert_raises(contains="Unknown field: b"):
         _ = from_json[Strict]('{"a":1,"b":2}')
 
 
@@ -182,6 +186,24 @@ def test_optional() raises:
     assert_equal(some.value(), Int64(5))
     var none = from_json[Optional[Int64]]("null")
     assert_false(Bool(none))
+
+
+@fieldwise_init
+struct ByteBuf(Deserializable, Movable):
+    var data: List[Byte]
+
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        return Self(d.expect_bytes())
+
+
+def test_bytes() raises:
+    var r = from_json[ByteBuf]("[1,2,255]")
+    assert_equal(len(r.data), 3)
+    assert_equal(r.data[0], 1)
+    assert_equal(r.data[2], 255)
 
 
 def test_enum_int_arm() raises:

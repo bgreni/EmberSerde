@@ -64,9 +64,7 @@ __extension Variant(Serializable):
         comptime for i in range(Self.Ts.length):
             comptime AT = Self.Ts[i]
             if self.isa[AT]():
-                var st = s.begin_enum[reflect[Self].name(), arm_tag[AT]()](
-                    UInt32(i)
-                )
+                var st = s.begin_enum[Self, arm_tag[AT]()](UInt32(i))
                 st.serialize_payload(self.unsafe_get[AT]())
                 st.end()
                 return
@@ -151,6 +149,9 @@ __extension OwnedPointer(Serializable):
         emberserde.serialize.serialize(self[], s)
 
 
+# Transparent, so identity does not survive the wire: a pointee shared by N
+# `ArcPointer`s is written N times and reads back as N separate allocations,
+# and a reference cycle recurses until the stack overflows.
 __extension ArcPointer(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
         emberserde.serialize.serialize(self[], s)

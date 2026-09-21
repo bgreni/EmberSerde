@@ -27,7 +27,13 @@ from .error import (
     SerErrorKind,
 )
 from .field import Defaulted, Field, Rename, Skip
-from .field_meta import FieldMeta, wire_field_names
+from .field_meta import (
+    FieldMeta,
+    UNKNOWN_FIELD,
+    field_index,
+    next_wire_field,
+    wire_field_names,
+)
 from .struct_modifiers import (
     ArmName,
     DenyUnknownFields,

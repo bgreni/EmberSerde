@@ -5,12 +5,6 @@ struct SerErrorKind(Equatable, ImplicitlyCopyable, Writable):
     comptime InvalidValue = Self(0)
     comptime Custom = Self(1)
 
-    def __eq__(self, other: Self) -> Bool:
-        return self._kind == other._kind
-
-    def __ne__(self, other: Self) -> Bool:
-        return self._kind != other._kind
-
     def write_to(self, mut writer: Some[Writer]):
         if self == Self.InvalidValue:
             writer.write("InvalidValue")
@@ -38,12 +32,6 @@ struct DerErrorKind(Equatable, ImplicitlyCopyable, Writable):
     comptime UnknownVariant = Self(5)
     comptime Custom = Self(6)
 
-    def __eq__(self, other: Self) -> Bool:
-        return self._kind == other._kind
-
-    def __ne__(self, other: Self) -> Bool:
-        return self._kind != other._kind
-
     def write_to(self, mut writer: Some[Writer]):
         if self == Self.InvalidValue:
             writer.write("InvalidValue")
@@ -68,8 +56,7 @@ struct DeserializationError(Copyable, Writable):
     var kind: DerErrorKind
     # Wire path to the failure (e.g. `.inner.x` or `[2]`), prepended lazily
     # as the error unwinds through descent sites — the raise site itself pays
-    # nothing. Empty when the failure is at the root or the format opted out
-    # via `track_error_paths = False`.
+    # nothing. Empty when the failure is at the root.
     var path: String
 
     def __init__(out self, var message: String, kind: DerErrorKind):

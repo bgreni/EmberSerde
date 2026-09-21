@@ -2,7 +2,12 @@ from std.builtin.rebind import downcast
 from std.collections.string.string_span import get_static_string
 from std.reflection import reflect
 
-from emberserde.struct_modifiers import RenameAll, apply_rename_policy
+from emberserde.error import DeserializationError, DerErrorKind
+from emberserde.struct_modifiers import (
+    DenyUnknownFields,
+    RenameAll,
+    apply_rename_policy,
+)
 
 
 # Field-attribute metadata, exposed as comptime members so the reflection
@@ -36,17 +41,6 @@ def __is_optional[T: AnyType]() -> Bool:
     return reflect[T].base_name() == "Optional"
 
 
-# The declared name reshaped by the struct's `rename_all` policy, or unchanged
-# when the struct opts out. Field-level `rename` is applied separately and wins.
-def _policy_name[T: AnyType](declared: StaticString) -> String:
-    comptime if conforms_to(T, RenameAll):
-        return apply_rename_policy[downcast[T, RenameAll].FieldRenamePolicy](
-            declared
-        )
-    else:
-        return String(declared)
-
-
 # Whether field `i` drops out of the wire entirely (`Field[..., skip=True]`).
 def is_skipped[FT: AnyType]() -> Bool:
     comptime if conforms_to(FT, FieldMeta):
@@ -62,7 +56,12 @@ def wire_name[T: AnyType, FT: AnyType](declared: StaticString) -> String:
         comptime FM = downcast[FT, FieldMeta]
         comptime if FM.serde_name:
             return String(FM.serde_name.value())
-    return _policy_name[T](declared)
+    comptime if conforms_to(T, RenameAll):
+        return apply_rename_policy[downcast[T, RenameAll].FieldRenamePolicy](
+            declared
+        )
+    else:
+        return String(declared)
 
 
 # `wire_name` computed at comptime and interned in static memory, so
@@ -74,11 +73,7 @@ def static_wire_name[
 
 
 # The wire names `T` actually emits (skipped fields drop out, rename/policy
-# applied), in declaration order. This is the `begin_struct` contract for
-# ordered/non-self-describing formats: serve exactly these names so the
-# framework's name-matching loop in `expect_struct` binds every wire value —
-# serving declared names instead silently breaks any struct using
-# `Rename`/`RenameAll`/`Skip`.
+# applied), in declaration order.
 def wire_field_names[T: AnyType]() -> List[String]:
     var names = List[String]()
     comptime r = reflect[T]
@@ -96,27 +91,12 @@ def wire_field_names[T: AnyType]() -> List[String]:
 # `expect_struct` comptime-assert on this so the collision fails the build,
 # like serde's derive does.
 def has_unique_wire_names[T: AnyType]() -> Bool:
-    comptime r = reflect[T]
-    comptime for i in range(r.field_count()):
-        comptime if not is_skipped[r.field_types()[i]]():
-            comptime name_i = r.field_names()[i]
-            var wire_i = wire_name[T, r.field_types()[i]](name_i)
-            comptime for j in range(i + 1, r.field_count()):
-                comptime if not is_skipped[r.field_types()[j]]():
-                    comptime name_j = r.field_names()[j]
-                    if wire_i == wire_name[T, r.field_types()[j]](name_j):
-                        return False
+    var names = wire_field_names[T]()
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            if names[i] == names[j]:
+                return False
     return True
-
-
-# How many fields `T` actually emits — skipped `Field`s drop out.
-def visible_fields[T: AnyType]() -> Int:
-    var visible = 0
-    comptime r = reflect[T]
-    comptime for i in range(r.field_count()):
-        comptime if not is_skipped[r.field_types()[i]]():
-            visible += 1
-    return visible
 
 
 # Whether an incoming wire `name` binds field `i`: it matches the field's wire
@@ -126,7 +106,7 @@ def visible_fields[T: AnyType]() -> Int:
 # the runtime work is slice comparisons only.
 def name_matches[
     T: AnyType, FT: AnyType, declared: StaticString
-](name: String) -> Bool:
+](name: StringSlice) -> Bool:
     comptime if is_skipped[FT]():
         return False
     if name == static_wire_name[T, FT, declared]():
@@ -140,3 +120,43 @@ def name_matches[
                 if name == al:
                     return True
     return False
+
+
+# What `StructDerState.expect_field_index` returns for a wire key that binds
+# no field of `T`.
+comptime UNKNOWN_FIELD = -1
+
+
+# How a self-describing format turns a wire key into the declaration index
+# `expect_field_index` must return. Takes a slice so a key can be resolved
+# straight out of the input buffer. Raising here (rather than in
+# `expect_struct`) keeps the offending name in the `DenyUnknownFields` error —
+# the framework only ever sees the index.
+def field_index[
+    T: AnyType
+](name: StringSlice) raises DeserializationError -> Int:
+    comptime r = reflect[T]
+    comptime for i in range(r.field_count()):
+        comptime declared = r.field_names()[i]
+        if name_matches[T, r.field_types()[i], declared](name):
+            return i
+    comptime if conforms_to(T, DenyUnknownFields):
+        raise DeserializationError(
+            String(t"Unknown field: {name}"),
+            DerErrorKind.UnknownField,
+        )
+    else:
+        return UNKNOWN_FIELD
+
+
+# How an ordered/non-self-describing format walks `T`: the declaration index
+# of the first non-skipped field at or after `start`, `None` when there is
+# none. Skipped fields never reach the wire, so stepping `0, 1, 2, ...`
+# instead would misalign every value after a `Skip`.
+def next_wire_field[T: AnyType](start: Int) -> Optional[Int]:
+    comptime r = reflect[T]
+    comptime for i in range(r.field_count()):
+        comptime if not is_skipped[r.field_types()[i]]():
+            if i >= start:
+                return i
+    return None

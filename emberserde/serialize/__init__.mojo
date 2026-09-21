@@ -7,7 +7,7 @@ from .impls import *
 from emberserde.error import SerializationError
 from emberserde.field_meta import (
     static_wire_name,
-    visible_fields,
+    wire_field_names,
     is_skipped,
     has_unique_wire_names,
 )
@@ -38,9 +38,15 @@ trait MapSerState(Deinitable):
 
 
 trait StructSerState(Deinitable):
-    # A slice: the framework passes comptime-interned wire names, so taking
-    # owned `String` would force an allocation per field per record.
-    def serialize_field(
+    # `T` is the struct and `idx` the field's declaration index (position in
+    # `reflect[T]`'s fields), so a format can read its own metadata off the
+    # field — anything reflection can reach — without the framework knowing
+    # that metadata exists. `field_name` is the resolved wire name. A slice:
+    # the framework passes comptime-interned wire names, so taking owned
+    # `String` would force an allocation per field per record.
+    def serialize_field[
+        T: AnyType, idx: Int
+    ](
         mut self, field_name: StringSlice, v: Some[AnyType]
     ) raises SerializationError:
         ...
@@ -117,8 +123,13 @@ trait Serializer:
     ) raises SerializationError -> Self.MapType:
         ...
 
+    # The type itself rather than its name — mirroring the deserialize side —
+    # so a format that needs the shape before the first value (a header row,
+    # field numbers, a column schema) can reflect on it. `field_count` is the
+    # number of fields that will actually be emitted, which `Skip` can make
+    # smaller than `T`'s own.
     def begin_struct[
-        name: String
+        T: AnyType
     ](mut self, field_count: Int) raises SerializationError -> Self.StructType:
         ...
 
@@ -127,7 +138,7 @@ trait Serializer:
     ](mut self) raises SerializationError -> Self.TupleType:
         ...
 
-    # Externally-tagged sum type. `name` is the enum type's name; `variant` is
+    # Externally-tagged sum type. `T` is the enum type; `variant` is
     # the active arm's tag (its `ArmName`, or its canonical type name as the
     # fallback); `idx` is the arm's position (the discriminant a binary format
     # would write). Self-describing formats key on `variant`; non-self-
@@ -136,7 +147,7 @@ trait Serializer:
     # so it is best treated as debug/diagnostic unless every arm declares an
     # `ArmName`.
     def begin_enum[
-        name: String, variant: String
+        T: AnyType, variant: String
     ](mut self, idx: UInt32) raises SerializationError -> Self.EnumType:
         ...
 
@@ -195,9 +206,9 @@ trait Serializer:
 
         # `Field`-wrapped members may rename themselves or drop out entirely
         # (`skip`), so the emitted count can be smaller than the struct's.
-        comptime visible = visible_fields[T]()
+        comptime visible = len(wire_field_names[T]())
 
-        var state = self.begin_struct[r.name()](visible)
+        var state = self.begin_struct[T](visible)
 
         comptime for i in range(field_count):
             comptime FT = r.field_types()[i]
@@ -205,7 +216,7 @@ trait Serializer:
                 # Index at comptime so only the one name materializes, not the
                 # whole (non-ImplicitlyCopyable) field-names array.
                 comptime declared_name = field_names[i]
-                state.serialize_field(
+                state.serialize_field[T, i](
                     static_wire_name[T, FT, declared_name](),
                     r.field_ref[i](v),
                 )

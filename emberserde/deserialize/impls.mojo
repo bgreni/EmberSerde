@@ -7,7 +7,11 @@ from std.memory import OwnedPointer, ArcPointer, forget_deinit
 from std.os import abort
 from std.reflection import reflect
 from std.utils import Variant
-from emberserde.deserialize import Deserializable, Deserializer
+from emberserde.deserialize import (
+    Deserializable,
+    Deserializer,
+    SeqDerState,
+)
 from emberserde.error import DeserializationError, DerErrorKind
 from emberserde.struct_modifiers import arm_tag
 from emberserde.utils import Base
@@ -160,6 +164,16 @@ __extension ComplexSIMD(Deserializable):
             return Self(re, im)
 
 
+def _element[
+    ET: Base
+](mut seq: Some[SeqDerState], idx: Int) raises DeserializationError -> ET:
+    try:
+        return seq.expect_element[ET]()
+    except e:
+        e.prepend_path(String(t"[{idx}]"))
+        raise e^
+
+
 __extension List(Deserializable):
     @staticmethod
     def deserialize(
@@ -175,14 +189,7 @@ __extension List(Deserializable):
         var result = List[ET]()
         var seq = d.begin_seq()
         while seq.has_next():
-            comptime if type_of(d).track_error_paths:
-                try:
-                    result.append(seq.expect_element[ET]())
-                except e:
-                    e.prepend_path(String(t"[{len(result)}]"))
-                    raise e^
-            else:
-                result.append(seq.expect_element[ET]())
+            result.append(_element[ET](seq, len(result)))
         seq.end()
         return rebind_var[Self](result^)
 
@@ -200,18 +207,14 @@ __extension Dict(Deserializable):
         var result = Dict[KT, VT]()
         var m = d.begin_map()
         while m.has_next():
-            comptime if type_of(d).track_error_paths:
-                # Entry index, not the key: `K` is not generically Writable.
-                var idx = len(result)
-                try:
-                    var k = m.expect_key[KT]()
-                    result[k^] = m.expect_value[VT]()
-                except e:
-                    e.prepend_path(String(t"[{idx}]"))
-                    raise e^
-            else:
+            # Entry index, not the key: `K` is not generically Writable.
+            var idx = len(result)
+            try:
                 var k = m.expect_key[KT]()
                 result[k^] = m.expect_value[VT]()
+            except e:
+                e.prepend_path(String(t"[{idx}]"))
+                raise e^
         m.end()
         return rebind_var[Self](result^)
 
@@ -228,14 +231,7 @@ __extension Set(Deserializable):
         var result = Set[ET]()
         var seq = d.begin_seq()
         while seq.has_next():
-            comptime if type_of(d).track_error_paths:
-                try:
-                    result.add(seq.expect_element[ET]())
-                except e:
-                    e.prepend_path(String(t"[{len(result)}]"))
-                    raise e^
-            else:
-                result.add(seq.expect_element[ET]())
+            result.add(_element[ET](seq, len(result)))
         seq.end()
         return rebind_var[Self](result^)
 
@@ -252,14 +248,7 @@ __extension Deque(Deserializable):
         var result = Deque[ET]()
         var seq = d.begin_seq()
         while seq.has_next():
-            comptime if type_of(d).track_error_paths:
-                try:
-                    result.append(seq.expect_element[ET]())
-                except e:
-                    e.prepend_path(String(t"[{len(result)}]"))
-                    raise e^
-            else:
-                result.append(seq.expect_element[ET]())
+            result.append(_element[ET](seq, len(result)))
         seq.end()
         return rebind_var[Self](result^)
 
@@ -276,14 +265,7 @@ __extension LinkedList(Deserializable):
         var result = LinkedList[ET]()
         var seq = d.begin_seq()
         while seq.has_next():
-            comptime if type_of(d).track_error_paths:
-                try:
-                    result.append(seq.expect_element[ET]())
-                except e:
-                    e.prepend_path(String(t"[{len(result)}]"))
-                    raise e^
-            else:
-                result.append(seq.expect_element[ET]())
+            result.append(_element[ET](seq, len(result)))
         seq.end()
         return rebind_var[Self](result^)
 
@@ -296,17 +278,13 @@ __extension Counter(Deserializable):
         var result = Self()
         var m = d.begin_map()
         while m.has_next():
-            comptime if type_of(d).track_error_paths:
-                var idx = len(result)
-                try:
-                    var k = m.expect_key[Self.V]()
-                    result[k^] = m.expect_value[Int]()
-                except e:
-                    e.prepend_path(String(t"[{idx}]"))
-                    raise e^
-            else:
+            var idx = len(result)
+            try:
                 var k = m.expect_key[Self.V]()
                 result[k^] = m.expect_value[Int]()
+            except e:
+                e.prepend_path(String(t"[{idx}]"))
+                raise e^
         m.end()
         return result^
 
@@ -337,8 +315,7 @@ __extension Array(Deserializable):
             for i in range(count):
                 result.unsafe_ptr().unsafe_offset(i).unsafe_deinit_pointee()
             forget_deinit(result^)
-            comptime if type_of(d).track_error_paths:
-                e.prepend_path(String(t"[{count}]"))
+            e.prepend_path(String(t"[{count}]"))
             raise e^
         return rebind_var[Self](result^)
 
@@ -371,8 +348,7 @@ __extension Tuple(Deserializable):
             state.end()
         except e:
             result^.deinit_with[dispose]()
-            comptime if type_of(d).track_error_paths:
-                e.prepend_path(String(t"[{filled}]"))
+            e.prepend_path(String(t"[{filled}]"))
             raise e^
 
         return result^

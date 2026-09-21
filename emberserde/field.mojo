@@ -28,7 +28,7 @@ struct Field[
     # skip_if: def(T) -> Bool = __just_true[T],
     default: Optional[T] = None,
     # compiler will prune this default away so no runtime cost
-    validate: def(T) thin -> Bool = __just_true[T]
+    validate: def(T) thin -> Bool = __just_true[T],
 ](
     Copyable where conforms_to(T, Copyable),
     Defaultable where conforms_to(T, Defaultable),
@@ -78,8 +78,7 @@ struct Field[
 
     @staticmethod
     def deserialize(
-        mut d: Some[Deserializer],
-        out s: Self
+        mut d: Some[Deserializer], out s: Self
     ) raises DeserializationError:
         s = {deserialize[Self.T](d)}
 

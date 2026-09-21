@@ -8,10 +8,10 @@ from emberserde.field_meta import (
     FieldMeta,
     __is_optional,
     has_unique_wire_names,
-    name_matches,
+    is_skipped,
 )
 from emberserde.struct_modifiers import RenameAll, DenyUnknownFields
-from emberserde.utils import Base
+from emberserde.utils import Base, unimplemented
 
 
 def _all_dtors_are_trivial[T: AnyType]() -> Bool:
@@ -118,15 +118,18 @@ trait MapDerState(Deinitable):
 
 
 trait StructDerState(Deinitable):
-    # Returns `None` when the struct has no more fields (without consuming
-    # the closing delimiter — that is `end`'s job). Self-describing formats
-    # read the name off the wire; non-self-describing formats serve
-    # `wire_field_names[T]()` (wire names of non-skipped fields, declaration
-    # order — NOT declared names, which diverge under `Rename`/`RenameAll`/
-    # `Skip` and would fall through to `skip_value`).
-    def expect_field_name(
-        mut self,
-    ) raises DeserializationError -> Optional[String]:
+    # The declaration index (position in `reflect[T]`'s fields) of the next
+    # field on the wire, or `None` when the struct has no more fields (without
+    # consuming the closing delimiter — that is `end`'s job). An index rather
+    # than a name — mirroring `EnumDerState.variant_index` — so a keyed format
+    # can resolve the key as a borrowed slice and an ordered format never has
+    # to invent names just to have them matched back. Self-describing formats
+    # read the key off the wire and resolve it with `field_index[T]`
+    # (`UNKNOWN_FIELD` when nothing binds); non-self-describing formats step
+    # through `next_wire_field[T]`.
+    def expect_field_index[
+        T: AnyType
+    ](mut self) raises DeserializationError -> Optional[Int]:
         ...
 
     def expect_field_value[
@@ -165,13 +168,6 @@ trait Deserializer:
     comptime TupleType: TupleDerState
     comptime EnumType: EnumDerState
 
-    # Lazy error-path tracking: descent sites (struct fields, seq/map/tuple
-    # elements) wrap their reads in try/except and prepend a path segment
-    # (`.name`, `[i]`) to `DeserializationError.path` on the way out. Costs
-    # nothing on the happy path; a format can opt out entirely by declaring
-    # this False, which comptime-removes the wraps.
-    comptime track_error_paths: Bool = True
-
     def expect_bool(mut self) raises DeserializationError -> Bool:
         ...
 
@@ -182,6 +178,12 @@ trait Deserializer:
 
     def expect_string(mut self) raises DeserializationError -> String:
         ...
+
+    # The read side of `serialize_bytes`. Defaulted the same way, so a format
+    # with no byte encoding fails at comptime only when a type asks for one.
+    def expect_bytes(mut self) raises DeserializationError -> List[Byte]:
+        unimplemented["expect_bytes"]()
+        return []
 
     # `Base` (not just `Movable`): a format whose optional encoding has
     # trailing framing after the payload must be able to drop the payload
@@ -253,42 +255,43 @@ trait Deserializer:
         var seen = Array[Bool, r.field_count()](fill=False)
 
         while True:
-            var name_opt = st.expect_field_name()
-            if not name_opt:
+            var field = st.expect_field_index[T]()
+            if not field:
                 break
-            var name = name_opt.value()
+            var idx = field.value()
 
             var matched = False
             comptime for i in range(r.field_count()):
-                # Index at comptime so only the one name materializes, not the
-                # whole (non-ImplicitlyCopyable) field-names array.
-                comptime declared_name = names[i]
-                if not matched and name_matches[
-                    T, r.field_types()[i], declared_name
-                ](name):
-                    if seen[i]:
-                        raise DeserializationError(
-                            String(t"duplicate field: {declared_name}"),
-                            DerErrorKind.DuplicateField,
-                        )
-                    seen[i] = True
-                    matched = True
-                    comptime assert conforms_to(
-                        r.field_types()[i], Base
-                    ), "field types must be Movable & Deinitable"
-                    comptime FT = downcast[r.field_types()[i], Base]
-                    comptime if Self.track_error_paths:
+                # A skipped field never binds, whatever index the format
+                # hands back.
+                comptime if not is_skipped[r.field_types()[i]]():
+                    # Index at comptime so only the one name materializes, not
+                    # the whole (non-ImplicitlyCopyable) field-names array.
+                    comptime declared_name = names[i]
+                    if idx == i:
+                        if seen[i]:
+                            raise DeserializationError(
+                                String(t"duplicate field: {declared_name}"),
+                                DerErrorKind.DuplicateField,
+                            )
+                        seen[i] = True
+                        matched = True
+                        comptime assert conforms_to(
+                            r.field_types()[i], Base
+                        ), "field types must be Movable & Deinitable"
+                        comptime FT = downcast[r.field_types()[i], Base]
                         try:
                             r.field_ref[i](result) = st.expect_field_value[FT]()
                         except e:
                             e.prepend_path(String(t".{declared_name}"))
                             raise e^
-                    else:
-                        r.field_ref[i](result) = st.expect_field_value[FT]()
             if not matched:
+                # `field_index` already raised with the key's name; this
+                # nameless raise only catches a format that resolved the key
+                # itself.
                 comptime if conforms_to(T, DenyUnknownFields):
                     raise DeserializationError(
-                        String(t"Unknown field: {name}"),
+                        String("Unknown field"),
                         DerErrorKind.UnknownField,
                     )
                 else:

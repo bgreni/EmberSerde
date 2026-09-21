@@ -123,9 +123,9 @@ struct UnusedState(
     def expect_value[T: AnyType](mut self) raises DeserializationError -> T:
         raise _unsupported()
 
-    def expect_field_name(
-        mut self,
-    ) raises DeserializationError -> Optional[String]:
+    def expect_field_index[
+        T: AnyType
+    ](mut self) raises DeserializationError -> Optional[Int]:
         raise _unsupported()
 
     def expect_field_value[

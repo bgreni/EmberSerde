@@ -15,12 +15,6 @@ struct RenamePolicy(Equatable, ImplicitlyCopyable, Writable):
     comptime LowerCase = Self(6)
     comptime UpperCase = Self(7)
 
-    def __eq__(self, other: Self) -> Bool:
-        return self._value == other._value
-
-    def __ne__(self, other: Self) -> Bool:
-        return self._value != other._value
-
     def write_to(self, mut writer: Some[Writer]):
         if self == Self.SnakeCase:
             writer.write("SnakeCase")
@@ -74,22 +68,6 @@ def arm_tag[AT: AnyType]() -> String:
     return String(reflect[AT].name())
 
 
-def _is_upper(c: Int) -> Bool:
-    return c >= ord("A") and c <= ord("Z")
-
-
-def _is_lower(c: Int) -> Bool:
-    return c >= ord("a") and c <= ord("z")
-
-
-def _is_digit(c: Int) -> Bool:
-    return c >= ord("0") and c <= ord("9")
-
-
-def _to_lower(c: Int) -> Int:
-    return c + 32 if _is_upper(c) else c
-
-
 # Split a declared field name into lowercased words, inferring boundaries rather
 # than assuming any one input convention: separators (`_`/`-`) split, and so do
 # case transitions (`fooBar`, `HTTPServer` -> `http`, `server`). So the same
@@ -101,22 +79,24 @@ def _split_words(name: StringSlice) -> List[String]:
     var bytes = name.as_bytes()
     var n = len(bytes)
     for i in range(n):
-        var c = Int(bytes[i])
-        if c == ord("_") or c == ord("-"):
+        var c = Codepoint(bytes[i])
+        if c == Codepoint("_") or c == Codepoint("-"):
             if cur.byte_length() != 0:
                 words.append(cur^)
                 cur = String()
             continue
         if cur.byte_length() != 0:
-            var prev = Int(bytes[i - 1])
-            var nxt = Int(bytes[i + 1]) if i + 1 < n else 0
-            var boundary = (
-                _is_upper(c) and (_is_lower(prev) or _is_digit(prev))
-            ) or (_is_upper(c) and _is_upper(prev) and _is_lower(nxt))
+            var prev = Codepoint(bytes[i - 1])
+            var nxt = Codepoint(bytes[i + 1] if i + 1 < n else 0)
+            var boundary = c.is_ascii_upper() and (
+                prev.is_ascii_lower()
+                or prev.is_ascii_digit()
+                or (prev.is_ascii_upper() and nxt.is_ascii_lower())
+            )
             if boundary:
                 words.append(cur^)
                 cur = String()
-        cur += chr(_to_lower(c))
+        cur += String(c).lower()
     if cur.byte_length() != 0:
         words.append(cur^)
     return words^
@@ -124,48 +104,34 @@ def _split_words(name: StringSlice) -> List[String]:
 
 # Capitalize the first codepoint of an already-lowercased `word`.
 def _capitalize(word: String) -> String:
-    var out = String()
-    var first = True
-    for cp in word.codepoint_slices():
-        if first:
-            out += String(cp).upper()
-            first = False
-        else:
-            out += String(cp)
-    return out^
+    return word[codepoint=0:1].upper() + word[codepoint=1:]
 
 
 # Convert a declared field name to its wire form under `policy`, matching
 # serde's `rename_all`. The name is tokenized into words first (see
 # `_split_words`), so the input convention does not matter.
 def apply_rename_policy[policy: RenamePolicy](declared: StaticString) -> String:
+    comptime P = RenamePolicy
+    comptime assert 0 <= policy._value <= 7, String(
+        t"Unsupported rename policy {policy}"
+    )
+    comptime snake = policy == P.SnakeCase or policy == P.ScreamingSnakeCase
+    comptime kebab = policy == P.KebabCase or policy == P.ScreamingKebabCase
+    comptime screaming = (
+        policy == P.ScreamingSnakeCase or policy == P.ScreamingKebabCase
+    )
+    comptime sep: StaticString = "_" if snake else "-" if kebab else ""
+    comptime upper = screaming or policy == P.UpperCase
+    comptime capitalize_from = (
+        0 if policy == P.PascalCase else 1 if policy == P.CamelCase else Int.MAX
+    )
     var words = _split_words(declared)
     var out = String()
     for i in range(len(words)):
-        comptime if policy == RenamePolicy.SnakeCase:
-            if i > 0:
-                out += "_"
-            out += words[i]
-        elif policy == RenamePolicy.ScreamingSnakeCase:
-            if i > 0:
-                out += "_"
+        if i > 0:
+            out += sep
+        comptime if upper:
             out += words[i].upper()
-        elif policy == RenamePolicy.KebabCase:
-            if i > 0:
-                out += "-"
-            out += words[i]
-        elif policy == RenamePolicy.ScreamingKebabCase:
-            if i > 0:
-                out += "-"
-            out += words[i].upper()
-        elif policy == RenamePolicy.LowerCase:
-            out += words[i]
-        elif policy == RenamePolicy.UpperCase:
-            out += words[i].upper()
-        elif policy == RenamePolicy.CamelCase:
-            out += words[i] if i == 0 else _capitalize(words[i])
-        elif policy == RenamePolicy.PascalCase:
-            out += _capitalize(words[i])
         else:
-            comptime assert False, String(t"Unsupported rename policy {policy}")
+            out += _capitalize(words[i]) if i >= capitalize_from else words[i]
     return out^

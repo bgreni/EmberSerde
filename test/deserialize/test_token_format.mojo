@@ -150,17 +150,6 @@ def test_numeric_narrowing_rejected() raises:
         _ = from_tokens[UInt16](["-1"])
 
 
-def test_error_paths_opted_out() raises:
-    # `TokenDeserializer` declares `track_error_paths = False`, so the wraps
-    # comptime-vanish and the error carries no path.
-    var path = String("unset")
-    try:
-        _ = from_tokens[List[Int]](["3", "10", "oops", "30"])
-    except e:
-        path = e.path
-    assert_equal(path, String())
-
-
 def test_truncated_stream_raises() raises:
     # A 3-element count followed by only two values: the reader runs off the
     # end of the stream with nothing on the wire to stop it early.

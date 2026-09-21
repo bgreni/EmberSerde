@@ -98,7 +98,8 @@ def test_defaulted_non_defaultable_fills() raises:
     assert_equal(r.p[].y, 4)
 
 
-comptime Validated = Field[Int, validate= lambda (x : Int) -> Bool: x > 0]
+comptime Validated = Field[Int, validate=lambda (x: Int) -> Bool: x > 0]
+
 
 def test_validate() raises:
     var r = from_debug[Validated]("5")
@@ -110,6 +111,7 @@ def test_validate() raises:
     # want to burden this ctor with always raising.
     # with assert_raises():
     #     _ = Validated(-1)
+
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

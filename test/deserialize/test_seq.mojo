@@ -1,6 +1,26 @@
 from std.collections import Set, Deque, LinkedList
-from std.testing import assert_equal, assert_true, assert_false, TestSuite
+from std.testing import (
+    assert_equal,
+    assert_true,
+    assert_false,
+    assert_raises,
+    TestSuite,
+)
 from _debug_format import from_debug
+from emberserde.deserialize import Deserializable, Deserializer
+from emberserde.error import DeserializationError
+
+
+# No stdlib type routes through `expect_bytes` yet, so stand one in.
+@fieldwise_init
+struct ByteBuf(Deserializable, Movable):
+    var data: List[Byte]
+
+    @staticmethod
+    def deserialize(
+        mut d: Some[Deserializer],
+    ) raises DeserializationError -> Self:
+        return Self(d.expect_bytes())
 
 
 def test_list_of_int() raises:
@@ -131,6 +151,24 @@ def test_linked_list_of_string() raises:
     assert_equal(len(r), 2)
     assert_equal(r.get_nth(0), String("a"))
     assert_equal(r.get_nth(1), String("bb"))
+
+
+def test_bytes() raises:
+    var r = from_debug[ByteBuf]("b[1, 2, 255]")
+    assert_equal(len(r.data), 3)
+    assert_equal(r.data[0], 1)
+    assert_equal(r.data[1], 2)
+    assert_equal(r.data[2], 255)
+
+
+def test_bytes_empty() raises:
+    assert_equal(len(from_debug[ByteBuf]("b[]").data), 0)
+
+
+# The `b` framing is what tells bytes from a seq; a bare seq is not bytes.
+def test_bytes_rejects_plain_seq() raises:
+    with assert_raises():
+        _ = from_debug[ByteBuf]("[1, 2]")
 
 
 def test_error_path_list_index() raises:
