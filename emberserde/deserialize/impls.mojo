@@ -206,15 +206,17 @@ __extension Dict(Deserializable):
         comptime VT = downcast[Self.V, Base]
         var result = Dict[KT, VT]()
         var m = d.begin_map()
+        # Entry index, not the key: `K` is not generically Writable. Counted
+        # rather than `len(result)` so a repeated key does not shift it.
+        var idx = 0
         while m.has_next():
-            # Entry index, not the key: `K` is not generically Writable.
-            var idx = len(result)
             try:
                 var k = m.expect_key[KT]()
                 result[k^] = m.expect_value[VT]()
             except e:
                 e.prepend_path(String(t"[{idx}]"))
                 raise e^
+            idx += 1
         m.end()
         return rebind_var[Self](result^)
 
@@ -230,8 +232,12 @@ __extension Set(Deserializable):
         comptime ET = downcast[Self.T, KeyElement & Deinitable]
         var result = Set[ET]()
         var seq = d.begin_seq()
+        # Wire position, not `len(result)`: a duplicate element leaves the
+        # set's size behind the element count.
+        var idx = 0
         while seq.has_next():
-            result.add(_element[ET](seq, len(result)))
+            result.add(_element[ET](seq, idx))
+            idx += 1
         seq.end()
         return rebind_var[Self](result^)
 
@@ -277,14 +283,15 @@ __extension Counter(Deserializable):
     ) raises DeserializationError -> Self:
         var result = Self()
         var m = d.begin_map()
+        var idx = 0
         while m.has_next():
-            var idx = len(result)
             try:
                 var k = m.expect_key[Self.V]()
                 result[k^] = m.expect_value[Int]()
             except e:
                 e.prepend_path(String(t"[{idx}]"))
                 raise e^
+            idx += 1
         m.end()
         return result^
 

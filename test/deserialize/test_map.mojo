@@ -58,5 +58,52 @@ def test_counter_absent_key_is_zero() raises:
     assert_equal(r["missing"], 0)
 
 
+def test_error_path_dict_value() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Dict[String, Int]]('{"a": 1, "b": oops}')
+    except e:
+        path = e.path
+    assert_equal(path, "[1]")
+
+
+def test_error_path_dict_key() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Dict[Int, Int]]("{1: 10, oops: 20}")
+    except e:
+        path = e.path
+    assert_equal(path, "[1]")
+
+
+# The index is the entry's position on the wire, so a repeated key that
+# overwrites instead of growing the dict must not shift it.
+def test_error_path_dict_index_counts_wire_entries() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Dict[String, Int]]('{"a": 1, "a": 2, "b": oops}')
+    except e:
+        path = e.path
+    assert_equal(path, "[2]")
+
+
+def test_error_path_counter_value() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Counter[String]]('{"a": 1, "b": oops}')
+    except e:
+        path = e.path
+    assert_equal(path, "[1]")
+
+
+def test_error_path_counter_index_counts_wire_entries() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Counter[String]]('{"a": 1, "a": 2, "b": oops}')
+    except e:
+        path = e.path
+    assert_equal(path, "[2]")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

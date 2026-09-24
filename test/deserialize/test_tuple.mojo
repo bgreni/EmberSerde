@@ -39,5 +39,23 @@ def test_heterogeneous_with_false() raises:
     assert_equal(rebuilt[2], False)
 
 
+def test_error_path_tuple_index() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Tuple[Int, String, Bool]]('(1, "hi", oops)')
+    except e:
+        path = e.path
+    assert_equal(path, "[2]")
+
+
+def test_error_path_nested_tuple_index() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Tuple[Int, Tuple[Int, Int]]]("(1, (2, oops))")
+    except e:
+        path = e.path
+    assert_equal(path, "[1][1]")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

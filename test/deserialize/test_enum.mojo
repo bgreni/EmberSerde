@@ -75,5 +75,16 @@ def test_variant_tokens_second_arm() raises:
     assert_equal(r.unsafe_get[String](), String("hi"))
 
 
+def test_error_path_enum_payload_adds_no_segment() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Variant[Int64, Point]](
+            "test_enum.Point(test_enum.Point { x: 1, y: oops })"
+        )
+    except e:
+        path = e.path
+    assert_equal(path, ".y")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

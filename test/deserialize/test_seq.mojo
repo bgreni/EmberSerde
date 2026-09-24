@@ -180,5 +180,34 @@ def test_error_path_list_index() raises:
     assert_equal(path, "[1]")
 
 
+def test_error_path_nested_list_index() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[List[List[Int]]]("[[1], [2, oops]]")
+    except e:
+        path = e.path
+    assert_equal(path, "[1][1]")
+
+
+# The index is the element's position on the wire, so a dedup that shrinks
+# the set must not shift it.
+def test_error_path_set_index_counts_wire_elements() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Set[Int]]("[1, 1, oops]")
+    except e:
+        path = e.path
+    assert_equal(path, "[2]")
+
+
+def test_error_path_inline_array_index() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Array[Int, 3]]("(1, oops, 3)")
+    except e:
+        path = e.path
+    assert_equal(path, "[1]")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

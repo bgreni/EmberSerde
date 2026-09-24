@@ -201,5 +201,56 @@ def test_optional_field_present() raises:
     assert_equal(w.note.value(), Int64(9))
 
 
+def test_error_path_struct_in_list_in_struct() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[TreeNode](
+            "T { value: 1, kids: [T { value: 2, kids: [] }, T { value: oops"
+            " }] }"
+        )
+    except e:
+        path = e.path
+    assert_equal(path, ".kids[1].value")
+
+
+def test_error_path_nested_missing_field() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[Nest]('N { label: "l", inner: P { x: 1 } }')
+    except e:
+        path = e.path
+    assert_equal(path, ".inner")
+
+
+def test_error_path_optional_payload_adds_no_segment() raises:
+    var path = String("unset")
+    try:
+        _ = from_debug[WithOpt]("W { id: 7, note: Some(oops) }")
+    except e:
+        path = e.path
+    assert_equal(path, ".note")
+
+
+def test_error_at_root_has_empty_path() raises:
+    var rendered = String("unset")
+    var path = String("unset")
+    try:
+        _ = from_debug[Bool]("oops")
+    except e:
+        path = e.path
+        rendered = String(e)
+    assert_equal(path, "")
+    assert_equal(rendered, "expected 'false' (InvalidValue)")
+
+
+def test_error_renders_path_message_and_kind() raises:
+    var rendered = String("unset")
+    try:
+        _ = from_debug[Record]('Rec { id: 1, name: "a", active: oops }')
+    except e:
+        rendered = String(e)
+    assert_equal(rendered, "at .active: expected 'false' (InvalidValue)")
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

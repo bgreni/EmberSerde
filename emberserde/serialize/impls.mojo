@@ -91,7 +91,13 @@ __extension ComplexSIMD(Serializable):
 
 __extension List(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        s.serialize_seq(self)
+        # Index, don't go through `serialize_seq`: the generic iterator
+        # hands back an owned element per step, which blocks inlining
+        # (~30% on citm reflection serialize).
+        var st = s.begin_seq(len(self))
+        for i in range(len(self)):
+            st.serialize_element(self[i])
+        st.end()
 
 
 __extension Dict(Serializable):
@@ -105,17 +111,26 @@ __extension Dict(Serializable):
 
 __extension Set(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        s.serialize_seq(self)
+        var st = s.begin_seq(len(self))
+        for element in self:
+            st.serialize_element(element)
+        st.end()
 
 
 __extension Deque(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        s.serialize_seq(self)
+        var st = s.begin_seq(len(self))
+        for i in range(len(self)):
+            st.serialize_element(self[i])
+        st.end()
 
 
 __extension LinkedList(Serializable):
     def serialize(self, mut s: Some[Serializer]) raises SerializationError:
-        s.serialize_seq(self)
+        var st = s.begin_seq(len(self))
+        for element in self:
+            st.serialize_element(element)
+        st.end()
 
 
 __extension Counter(Serializable):
@@ -189,6 +204,10 @@ __extension Span(Serializable):
         comptime if reflect[Self.T].name() == reflect[Byte].name():
             s.serialize_bytes(rebind[Span[Byte, Self.origin]](self))
         else:
-            # Rebind to the generic address space, where `Iterable`
-            # conformance holds.
-            s.serialize_seq(rebind[Span[Self.T, Self.origin]](self))
+            # Rebind to the concrete `Span[T, origin]` struct -- that's what
+            # makes `rs[i]` indexing below type-check.
+            var rs = rebind[Span[Self.T, Self.origin]](self)
+            var st = s.begin_seq(len(rs))
+            for i in range(len(rs)):
+                st.serialize_element(rs[i])
+            st.end()

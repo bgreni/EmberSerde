@@ -324,10 +324,11 @@ in any order and then applies these rules:
 
 ### Errors
 
-`SerializationError` and `DeserializationError` carry a `message` and a `kind`
-(`TypeMismatch`, `MissingField`, `UnknownVariant`, ...). Mojo's `raises`
-carries no payload, so `kind` is the typed dispatch. A deserialization error
-also records the wire path to the failure, built lazily as the error unwinds:
+Every hook and entry point raises a typed `SerializationError` or
+`DeserializationError`, so `except e` hands you the struct directly. Both
+carry a `message` and a `kind` to branch on (`TypeMismatch`, `MissingField`,
+`UnknownVariant`, ...). A deserialization error also records the wire path to
+the failure, built lazily as the error unwinds:
 
 ```
 at .inner.y: expected a number (TypeMismatch)
