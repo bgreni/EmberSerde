@@ -99,6 +99,47 @@ def has_unique_wire_names[T: AnyType]() -> Bool:
     return True
 
 
+# `name == W` for a comptime-known `W`, specialized on `W`'s length. Wire keys
+# are short, and the generic slice comparison runs a byte-at-a-time `memcmp`
+# loop below 16 bytes; here the length test is one compare against a constant
+# and the contents are at most a few overlapping word loads.
+@always_inline
+def _word_eq[
+    DT: DType, off: Int
+](a: ImmPointer[Byte, ...], b: ImmPointer[Byte, ...]) -> Bool:
+    return (
+        a.unsafe_offset(off).unsafe_bitcast[Scalar[DT]]()[]
+        == b.unsafe_offset(off).unsafe_bitcast[Scalar[DT]]()[]
+    )
+
+
+@always_inline
+def _eq_static[W: StaticString](name: StringSlice) -> Bool:
+    comptime L = W.byte_length()
+    if name.byte_length() != L:
+        return False
+    var p = name.unsafe_ptr()
+    var q = W.unsafe_ptr()
+    comptime if L == 0:
+        return True
+    elif L < 4:
+        comptime for i in range(L):
+            if p[unsafe_offset=i] != q[unsafe_offset=i]:
+                return False
+        return True
+    elif L < 8:
+        return _word_eq[DType.uint32, 0](p, q) and _word_eq[
+            DType.uint32, L - 4
+        ](p, q)
+    else:
+        comptime for k in range(L // 8):
+            if not _word_eq[DType.uint64, k * 8](p, q):
+                return False
+        comptime if L % 8 != 0:
+            return _word_eq[DType.uint64, L - 8](p, q)
+        return True
+
+
 # Whether an incoming wire `name` binds field `i`: it matches the field's wire
 # name (rename > policy > declared) or any explicit `extra_names` alias. A
 # skipped field never matches. Aliases are taken verbatim — `rename_all` does
@@ -109,7 +150,7 @@ def name_matches[
 ](name: StringSlice) -> Bool:
     comptime if is_skipped[FT]():
         return False
-    if name == static_wire_name[T, FT, declared]():
+    if _eq_static[static_wire_name[T, FT, declared]()](name):
         return True
     comptime if conforms_to(FT, FieldMeta):
         comptime FM = downcast[FT, FieldMeta]
@@ -117,7 +158,7 @@ def name_matches[
             comptime extra = FM.serde_extra.value()
             comptime for j in range(len(extra)):
                 comptime al = get_static_string[extra[j]]()
-                if name == al:
+                if _eq_static[al](name):
                     return True
     return False
 
