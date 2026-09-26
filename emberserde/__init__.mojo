@@ -19,6 +19,7 @@ from .deserialize import (
     EnumDerState,
     checked_scalar,
     deserialize,
+    deserialize_struct,
 )
 from .error import (
     DeserializationError,

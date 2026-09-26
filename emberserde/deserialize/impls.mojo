@@ -3,9 +3,15 @@ from std.builtin.rebind import downcast, rebind_var
 from std.collections import Set, Deque, LinkedList, Counter
 from std.collections.string import Codepoint
 from std.complex import ComplexSIMD
-from std.memory import OwnedPointer, ArcPointer, forget_deinit
+from std.memory import (
+    OwnedPointer,
+    ArcPointer,
+    forget_deinit,
+    unsafe_uninit_move_n,
+)
 from std.os import abort
 from std.reflection import reflect
+from std.sys.info import size_of
 from std.utils import Variant
 from emberserde.deserialize import (
     Deserializable,
@@ -35,6 +41,7 @@ __extension String(Deserializable):
 
 __extension SIMD(Deserializable):
     @staticmethod
+    @always_inline
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
@@ -170,12 +177,26 @@ def _element[
     try:
         return seq.expect_element[ET]()
     except e:
-        e.prepend_path(String(t"[{idx}]"))
+        _prepend_index(e, idx)
         raise e^
+
+
+# Out of line for the same reason as `expect_struct`'s error helpers: a
+# failure-only path that would otherwise be formatted inline at every site.
+@no_inline
+def _prepend_index(mut e: DeserializationError, idx: Int):
+    e.prepend_path(String(t"[{idx}]"))
+
+
+# How many elements `List` deserialization stages on the stack before its
+# first heap allocation: up to 16, within a ~512-byte frame budget.
+def _staged_count[ET: AnyType]() -> Int:
+    return max(1, min(16, 512 // max(1, size_of[ET]())))
 
 
 __extension List(Deserializable):
     @staticmethod
+    @always_inline
     def deserialize(
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
@@ -186,12 +207,80 @@ __extension List(Deserializable):
         # unless its elements are statically `Deinitable`, and the
         # partially-built list must be droppable when a framing call raises.
         comptime ET = downcast[Self.T, Base]
-        var result = List[ET]()
         var seq = d.begin_seq()
-        while seq.has_next():
-            result.append(_element[ET](seq, len(result)))
+        # Empty lists are common (optional-ish arrays) and cost the element
+        # loop nothing: settle them here, inline in the caller.
+        if not seq.has_next():
+            seq.end()
+            return rebind_var[Self](List[ET]())
+        return rebind_var[Self](_deserialize_items[ET](seq))
+
+
+# Out of line: `List.deserialize` (and its empty-list check) inlines into
+# its caller, often a struct's field reader, where one copy of the element
+# loop per list-typed field would cost more than the call.
+@no_inline
+def _deserialize_items[
+    ET: Base
+](mut seq: Some[SeqDerState]) raises DeserializationError -> List[ET]:
+    """The elements of a sequence whose `has_next` has just returned True,
+    through the closing `end`.
+
+    The first elements are staged in stack storage, so a list that fits
+    lands in ONE exactly-sized heap allocation instead of the 1, 2, 4, ...
+    doubling chain `append` walks from empty -- that chain's reallocations
+    dominate deserializing small nested lists. Longer lists spill into the
+    heap and grow as usual.
+    """
+    comptime N = _staged_count[ET]()
+    var staged = Array[ET, N](uninitialized=True)
+    var count = 0
+    var result = List[ET]()
+    # One handler for the whole list rather than one per element (as
+    # `_element` does): `in_element` marks the failures that happened inside
+    # an element, which get its index prepended to their path.
+    var in_element = True
+    try:
+        while True:
+            var elem = seq.expect_element[ET]()
+            in_element = False
+            if len(result) == 0 and count < N:
+                staged.unsafe_ptr().unsafe_offset(count).unsafe_write(elem^)
+                count += 1
+            else:
+                if len(result) == 0:
+                    result.reserve(2 * N)
+                    result.resize(unsafe_uninit_length=count)
+                    unsafe_uninit_move_n[overlapping=False](
+                        dest=result.unsafe_ptr(),
+                        src=staged.unsafe_ptr(),
+                        count=count,
+                    )
+                    count = 0
+                result.append(elem^)
+            if not seq.has_next():
+                break
+            in_element = True
         seq.end()
-        return rebind_var[Self](result^)
+    except e:
+        if in_element:
+            _prepend_index(e, count + len(result))
+        # Only the staged prefix is initialized; letting `staged` drop would
+        # run destructors over uninitialized slots.
+        for i in range(count):
+            staged.unsafe_ptr().unsafe_offset(i).unsafe_deinit_pointee()
+        forget_deinit(staged^)
+        raise e^
+    if count > 0:
+        result = List[ET](unsafe_uninit_length=count)
+        var dst = result.unsafe_ptr()
+        var src = staged.unsafe_ptr()
+        for i in range(count):
+            dst.unsafe_offset(i).unsafe_write(
+                src.unsafe_offset(i).unsafe_take_pointee()
+            )
+    forget_deinit(staged^)
+    return result^
 
 
 __extension Dict(Deserializable):
@@ -214,7 +303,7 @@ __extension Dict(Deserializable):
                 var k = m.expect_key[KT]()
                 result[k^] = m.expect_value[VT]()
             except e:
-                e.prepend_path(String(t"[{idx}]"))
+                _prepend_index(e, idx)
                 raise e^
             idx += 1
         m.end()
@@ -289,7 +378,7 @@ __extension Counter(Deserializable):
                 var k = m.expect_key[Self.V]()
                 result[k^] = m.expect_value[Int]()
             except e:
-                e.prepend_path(String(t"[{idx}]"))
+                _prepend_index(e, idx)
                 raise e^
             idx += 1
         m.end()
@@ -322,7 +411,7 @@ __extension Array(Deserializable):
             for i in range(count):
                 result.unsafe_ptr().unsafe_offset(i).unsafe_deinit_pointee()
             forget_deinit(result^)
-            e.prepend_path(String(t"[{count}]"))
+            _prepend_index(e, count)
             raise e^
         return rebind_var[Self](result^)
 
@@ -355,7 +444,7 @@ __extension Tuple(Deserializable):
             state.end()
         except e:
             result^.deinit_with[dispose]()
-            e.prepend_path(String(t"[{filled}]"))
+            _prepend_index(e, filled)
             raise e^
 
         return result^
