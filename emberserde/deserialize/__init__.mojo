@@ -2,6 +2,7 @@ from std.builtin.rebind import downcast
 from std.reflection import reflect
 
 from .impls import *
+from .impls import deserialize
 from .borrow import BorrowingDeserializer, RawKind
 from emberserde.error import DeserializationError, DerErrorKind
 from emberserde.field_meta import (
@@ -378,17 +379,6 @@ def deserialize_struct[
                 raise _missing_field(declared_name)
 
     st.end()
-
-
-def deserialize[
-    T: AnyType
-](mut d: Some[Deserializer]) raises DeserializationError -> T:
-    comptime if conforms_to(T, Deserializable):
-        return T.deserialize(d)
-    elif conforms_to(T, Deinitable):
-        return d.expect_struct[T]()
-    else:
-        comptime assert False, "Cannot deserialize linear type"
 
 
 trait SelfDescribingDeserializer(Deserializer):

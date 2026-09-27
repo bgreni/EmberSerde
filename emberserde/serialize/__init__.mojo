@@ -4,6 +4,7 @@ from std.reflection import (
 )
 
 from .impls import *
+from .impls import serialize
 from emberserde.error import SerializationError
 from emberserde.field_meta import (
     static_wire_name,
@@ -222,12 +223,3 @@ trait Serializer:
                 )
 
         state.end()
-
-
-def serialize[
-    T: AnyType, //
-](value: T, mut s: Some[Serializer]) raises SerializationError:
-    comptime if conforms_to(T, Serializable):
-        value.serialize(s)
-    else:
-        s.serialize_struct(value)

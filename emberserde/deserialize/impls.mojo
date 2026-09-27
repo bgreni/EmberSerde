@@ -468,3 +468,16 @@ __extension ArcPointer(Deserializable):
         mut d: Some[Deserializer],
     ) raises DeserializationError -> Self:
         return Self(emberserde.deserialize.deserialize[Self.T](d))
+
+
+# Lives here, after the extensions, for the same reason as `serialize` in
+# `serialize/impls.mojo`.
+def deserialize[
+    T: AnyType
+](mut d: Some[Deserializer]) raises DeserializationError -> T:
+    comptime if conforms_to(T, Deserializable):
+        return T.deserialize(d)
+    elif conforms_to(T, Deinitable):
+        return d.expect_struct[T]()
+    else:
+        comptime assert False, "Cannot deserialize linear type"

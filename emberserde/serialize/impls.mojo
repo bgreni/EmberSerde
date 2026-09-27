@@ -211,3 +211,17 @@ __extension Span(Serializable):
             for i in range(len(rs)):
                 st.serialize_element(rs[i])
             st.end()
+
+
+# The dispatch lives here, after the extensions, not in `__init__`: an
+# `__extension` conformance is only kept when its declaring module gets loaded,
+# and when emberserde is reached solely through another precompiled package
+# nothing loads this module unless the dispatch itself is in it -- the gate
+# then silently misses every stdlib type (modular/modular#7179).
+def serialize[
+    T: AnyType, //
+](value: T, mut s: Some[Serializer]) raises SerializationError:
+    comptime if conforms_to(T, Serializable):
+        value.serialize(s)
+    else:
+        s.serialize_struct(value)

@@ -76,7 +76,7 @@ The framework mirrors serde's "the type asks, the format delivers" split, adapte
 - **Reflection-driven default**: the public `serialize[T](value, mut s)` entry point does `comptime if conforms_to(T, Serializable): value.serialize(s) else: s.serialize_struct(value)`, where `serialize_struct` walks `reflect[T]` fields. This is how non-custom structs get serialized for free.
 
 Module layout:
-- [emberserde/serialize/](emberserde/serialize/) — `Serializer`/`Serializable` traits + state structs (`__init__.mojo`), stdlib `Serializable` impls (`impls.mojo`).
+- [emberserde/serialize/](emberserde/serialize/) — `Serializer`/`Serializable` traits + state structs (`__init__.mojo`), stdlib `Serializable` impls and the `serialize[T]` dispatch (`impls.mojo`; `deserialize/` mirrors this). The dispatch must stay in the same module as the `__extension`s, after them — see the comment there.
 - [emberserde/deserialize/](emberserde/deserialize/) — `Deserializer`/state traits (in progress).
 - [emberserde/error.mojo](emberserde/error.mojo) — `SerializationError`/`DeserializationError` (Mojo `raises` carries no payload, so a `kind` field is the typed dispatch).
 
