@@ -5,13 +5,20 @@ from .impls import *
 from .impls import deserialize
 from .borrow import BorrowingDeserializer, RawKind
 from emberserde.error import DeserializationError, DerErrorKind
+from emberserde.field import Default, Transformer
+from emberserde.validate import FieldCheck
 from emberserde.field_meta import (
-    FieldMeta,
     __is_optional,
+    count_annotations,
+    field_annotations,
     has_unique_wire_names,
     is_skipped,
 )
-from emberserde.struct_modifiers import RenameAll, DenyUnknownFields
+from emberserde.struct_modifiers import (
+    DenyUnknownFields,
+    count_struct_annotations,
+    struct_annotations,
+)
 from emberserde.utils import Base, unimplemented
 
 
@@ -65,15 +72,120 @@ def _all_dtors_are_trivial[T: AnyType]() -> Bool:
     return True
 
 
-# May field `i` be absent from the wire? `Optional` always; a `Field` when it is
-# skipped or carries a default. Everything else is required.
-def _fill_if_missing[FT: AnyType]() -> Bool:
-    comptime if __is_optional[FT]():
-        return True
-    elif conforms_to(FT, FieldMeta):
-        return downcast[FT, FieldMeta].serde_fill_if_missing
+# May field `i` be absent from the wire? `Optional` always; otherwise only when
+# it is `Skip` or carries a `Default`. Everything else is required.
+def _fill_if_missing[T: AnyType, i: Int]() -> Bool:
+    comptime FT = reflect[T].field_types()[i]
+    return (
+        __is_optional[FT]()
+        or is_skipped[T, i]()
+        or count_annotations[T, i, Default[downcast[FT, Base]]]() > 0
+    )
+
+
+# Fills absent field `i` with its `Default` value, else `FT()`. The explicit
+# default needs no `FT()`, so non-Defaultable fields can carry one.
+def _fill_missing[T: AnyType, i: Int](mut t: T):
+    comptime FT = reflect[T].field_types()[i]
+    comptime assert conforms_to(
+        FT, Base
+    ), "field types must be Movable & Deinitable"
+    comptime D = Default[downcast[FT, Base]]
+    comptime n = count_annotations[T, i, D]()
+    comptime assert n <= 1, "a field may carry at most one Default"
+    comptime if n == 1:
+        comptime anns = field_annotations[T, i]
+        comptime Ts = type_of(anns).Ts
+        comptime for j in range(Ts.length):
+            comptime if Ts[j] == D:
+                comptime value = rebind[D](anns[j]).value
+                reflect[T].field_ref[i](t) = materialize[value]()
     else:
-        return False
+        comptime assert conforms_to(
+            FT, Defaultable
+        ), "a missing field must be Defaultable or carry a Default"
+        ref f = reflect[T].field_ref[i](t)
+        f = type_of(f)()
+
+
+@no_inline
+def _check_failed(message: StaticString) -> DeserializationError:
+    return DeserializationError(String(message), DerErrorKind.InvalidValue)
+
+
+# Runs every `FieldCheck` annotation on field `i` against its freshly read
+# value, in declaration order; the first failure raises its message.
+def _check_field[T: AnyType, i: Int](t: T) raises DeserializationError:
+    comptime anns = field_annotations[T, i]
+    comptime Ts = type_of(anns).Ts
+    comptime for j in range(Ts.length):
+        comptime if conforms_to(Ts[j], FieldCheck):
+            comptime a = rebind[downcast[Ts[j], FieldCheck]](anns[j])
+            var check = materialize[a]()
+            if not check.check(reflect[T].field_ref[i](t)):
+                raise _check_failed(check.message())
+
+
+# How many `Transformer` annotations field `i` carries.
+def _transform_count[T: AnyType, i: Int]() -> Int:
+    comptime Ts = type_of(field_annotations[T, i]).Ts
+    var n = 0
+    comptime for j in range(Ts.length):
+        comptime if conforms_to(Ts[j], Transformer):
+            n += 1
+    return n
+
+
+# `a.apply(value)` with its untyped `Error` turned into `InvalidValue`. Its
+# own function because one `try` cannot mix typed and untyped raises.
+def _apply_transform[
+    A: Transformer
+](a: A, var value: A.In) raises DeserializationError -> A.Out:
+    try:
+        return a.apply(value^)
+    except e:
+        raise DeserializationError(String(e), DerErrorKind.InvalidValue)
+
+
+# Reads field `i` into `t`: through its `Transform` when it carries one, else
+# as the field's own type.
+def _read_field[
+    T: AnyType, i: Int
+](mut st: Some[StructDerState], mut t: T) raises DeserializationError:
+    # Also what lets `field_ref` below be assigned into.
+    comptime assert conforms_to(
+        reflect[T].field_types()[i], Base
+    ), "field types must be Movable & Deinitable"
+    comptime FT = downcast[reflect[T].field_types()[i], Base]
+    comptime n = _transform_count[T, i]()
+    comptime assert n <= 1, "a field may carry at most one Transform"
+    comptime if n == 1:
+        comptime anns = field_annotations[T, i]
+        comptime Ts = type_of(anns).Ts
+        comptime for j in range(Ts.length):
+            comptime if conforms_to(Ts[j], Transformer):
+                comptime TT = downcast[Ts[j], Transformer]
+                comptime a = rebind[TT](anns[j])
+                var wire = st.expect_field_value[TT.In]()
+                reflect[T].field_ref[i](t) = rebind_var[FT](
+                    _apply_transform(materialize[a](), wire^)
+                )
+    else:
+        reflect[T].field_ref[i](t) = st.expect_field_value[FT]()
+
+
+# Runs every `FieldCheck` annotation on the struct itself against the whole,
+# finished value, in declaration order; the first failure raises its
+# message. This is where rules spanning several fields live.
+def _validate_struct[T: AnyType](t: T) raises DeserializationError:
+    comptime anns = struct_annotations[T]
+    comptime Ts = type_of(anns).Ts
+    comptime for j in range(Ts.length):
+        comptime if conforms_to(Ts[j], FieldCheck):
+            comptime a = rebind[downcast[Ts[j], FieldCheck]](anns[j])
+            var check = materialize[a]()
+            if not check.check(t):
+                raise _check_failed(check.message())
 
 
 # Parse a numeric token into `Scalar[DT]`, raising instead of silently
@@ -269,9 +381,11 @@ trait Deserializer:
     # FRAMEWORK DRIVER, not a format hook: the default body runs
     # `deserialize_struct`, the framework's field-evolution logic (name
     # matching, rename/alias/skip, duplicate/unknown/missing handling, error
-    # paths). A format that overrides it must still hand every struct it does
-    # not settle itself to `deserialize_struct`, or it silently opts out of
-    # all of that -- implement `begin_struct`/`StructDerState` instead.
+    # paths) and validation (field and struct checks, `Transform`). A
+    # format that overrides it must still hand every struct it does not
+    # settle itself to `deserialize_struct`, or it silently opts out of all
+    # of that, validation included -- implement `begin_struct`/
+    # `StructDerState` instead.
     def expect_struct[
         T: Deinitable
     ](mut self, out result: T) raises DeserializationError:
@@ -283,12 +397,16 @@ def deserialize_struct[
 ](mut d: Some[Deserializer], out result: T) raises DeserializationError:
     """The framework's struct driver: reads `T` field by field through `d`'s
     `begin_struct`/`StructDerState`, applying renames, aliases and skips,
-    rejecting duplicates and (under `DenyUnknownFields`) unknown fields, and
-    filling or rejecting missing ones.
+    rejecting duplicates and (under `DenyUnknownFields`) unknown fields,
+    filling or rejecting missing ones, and validating: each field is read
+    through its `Transform` and checked by its `FieldCheck` annotations, and
+    the struct's own checks run once it is complete.
 
     `Deserializer.expect_struct` runs it by default. A format may override
     `expect_struct` to settle common shapes faster, as long as everything it
-    does not settle itself ends up here.
+    does not settle itself ends up here. A fast path that settles a struct
+    itself skips all of the above, validation included, so it must only
+    take structs with no field or struct annotations.
     """
     comptime r = reflect[T]
     comptime assert r.is_struct(), "expect_struct requires a struct type"
@@ -325,7 +443,7 @@ def deserialize_struct[
             comptime for i in range(r.field_count()):
                 # A skipped field never binds, whatever index the format
                 # hands back.
-                comptime if not is_skipped[r.field_types()[i]]():
+                comptime if not is_skipped[T, i]():
                     # Index at comptime so only the one name
                     # materializes, not the whole (non-ImplicitlyCopyable)
                     # field-names array.
@@ -338,15 +456,17 @@ def deserialize_struct[
                         comptime assert conforms_to(
                             r.field_types()[i], Base
                         ), "field types must be Movable & Deinitable"
-                        comptime FT = downcast[r.field_types()[i], Base]
                         current = i
-                        r.field_ref[i](result) = st.expect_field_value[FT]()
+                        _read_field[T, i](st, result)
+                        _check_field[T, i](result)
                         current = -1
             if not matched:
                 # `field_index` already raised with the key's name; this
                 # nameless raise only catches a format that resolved the
                 # key itself.
-                comptime if conforms_to(T, DenyUnknownFields):
+                comptime if count_struct_annotations[
+                    T, DenyUnknownFields
+                ]() > 0:
                     raise DeserializationError(
                         String("Unknown field"),
                         DerErrorKind.UnknownField,
@@ -363,22 +483,13 @@ def deserialize_struct[
     comptime for i in range(r.field_count()):
         comptime declared_name = names[i]
         if not seen.contains[i]():
-            comptime if _fill_if_missing[r.field_types()[i]]():
-                comptime if conforms_to(r.field_types()[i], FieldMeta):
-                    # `Field` fills through its own hook so an explicit
-                    # `default` works without `T` being Defaultable.
-                    comptime FMT = downcast[r.field_types()[i], FieldMeta]
-                    r.field_ref[i](result) = FMT.serde_filled()
-                else:
-                    comptime assert conforms_to(
-                        r.field_types()[i], Base & Defaultable
-                    ), "Missing field must be Defaulable & Movable & Deinitable"
-                    ref f = r.field_ref[i](result)
-                    f = type_of(f)()
+            comptime if _fill_if_missing[T, i]():
+                _fill_missing[T, i](result)
             else:
                 raise _missing_field(declared_name)
 
     st.end()
+    _validate_struct[T](result)
 
 
 trait SelfDescribingDeserializer(Deserializer):

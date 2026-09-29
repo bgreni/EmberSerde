@@ -1,17 +1,69 @@
 from emberserde.utils import unimplemented, Base
+from std.builtin.rebind import downcast
 from std.reflection import (
     reflect,
 )
 
 from .impls import *
 from .impls import serialize
-from emberserde.error import SerializationError
+from emberserde.error import SerializationError, SerErrorKind
+from emberserde.field import SerializeTransformer
 from emberserde.field_meta import (
+    field_annotations,
     static_wire_name,
     wire_field_names,
     is_skipped,
     has_unique_wire_names,
 )
+
+
+# How many `SerializeTransformer` annotations field `i` carries.
+def _serialize_with_count[T: AnyType, i: Int]() -> Int:
+    comptime Ts = type_of(field_annotations[T, i]).Ts
+    var n = 0
+    comptime for j in range(Ts.length):
+        comptime if conforms_to(Ts[j], SerializeTransformer):
+            n += 1
+    return n
+
+
+# `a.apply(value)` with its untyped `Error` turned into `InvalidValue`. Its
+# own function because one `try` cannot mix typed and untyped raises.
+def _apply_serialize_with[
+    A: SerializeTransformer
+](a: A, value: A.Type) raises SerializationError -> A.Out:
+    try:
+        return a.apply(value)
+    except e:
+        raise SerializationError(String(e), SerErrorKind.InvalidValue)
+
+
+# Writes field `i` of `v`: through its `SerializeWith` when it carries one,
+# else as the field itself.
+@always_inline
+def _write_field[
+    T: AnyType, i: Int
+](mut state: Some[StructSerState], v: T) raises SerializationError:
+    comptime n = _serialize_with_count[T, i]()
+    comptime assert n <= 1, "a field may carry at most one SerializeWith"
+    comptime if n == 1:
+        comptime anns = field_annotations[T, i]
+        comptime Ts = type_of(anns).Ts
+        comptime for j in range(Ts.length):
+            comptime if conforms_to(Ts[j], SerializeTransformer):
+                comptime ST = downcast[Ts[j], SerializeTransformer]
+                comptime a = rebind[ST](anns[j])
+                state.serialize_field[T, i](
+                    static_wire_name[T, i](),
+                    _apply_serialize_with(
+                        materialize[a](),
+                        rebind[ST.Type](reflect[T].field_ref[i](v)),
+                    ),
+                )
+    else:
+        state.serialize_field[T, i](
+            static_wire_name[T, i](), reflect[T].field_ref[i](v)
+        )
 
 
 trait Serializable:
@@ -140,13 +192,13 @@ trait Serializer:
         ...
 
     # Externally-tagged sum type. `T` is the enum type; `variant` is
-    # the active arm's tag (its `ArmName`, or its canonical type name as the
-    # fallback); `idx` is the arm's position (the discriminant a binary format
+    # the active arm's tag (a struct-level `Rename`, or its canonical type
+    # name as the fallback); `idx` is the arm's position (the discriminant a binary format
     # would write). Self-describing formats key on `variant`; non-self-
     # describing formats key on `idx`. `idx` is the stable default for real
     # formats — a fallback name tag embeds module paths and stdlib spellings,
-    # so it is best treated as debug/diagnostic unless every arm declares an
-    # `ArmName`.
+    # so it is best treated as debug/diagnostic unless every arm carries a
+    # `Rename`.
     def begin_enum[
         T: AnyType, variant: String
     ](mut self, idx: UInt32) raises SerializationError -> Self.EnumType:
@@ -203,23 +255,15 @@ trait Serializer:
         )
 
         comptime field_count = r.field_count()
-        comptime field_names = r.field_names()
 
-        # `Field`-wrapped members may rename themselves or drop out entirely
-        # (`skip`), so the emitted count can be smaller than the struct's.
+        # Annotated fields may rename themselves or drop out entirely
+        # (`Skip`), so the emitted count can be smaller than the struct's.
         comptime visible = len(wire_field_names[T]())
 
         var state = self.begin_struct[T](visible)
 
         comptime for i in range(field_count):
-            comptime FT = r.field_types()[i]
-            comptime if not is_skipped[FT]():
-                # Index at comptime so only the one name materializes, not the
-                # whole (non-ImplicitlyCopyable) field-names array.
-                comptime declared_name = field_names[i]
-                state.serialize_field[T, i](
-                    static_wire_name[T, FT, declared_name](),
-                    r.field_ref[i](v),
-                )
+            comptime if not is_skipped[T, i]():
+                _write_field[T, i](state, v)
 
         state.end()

@@ -1,5 +1,7 @@
-from std.builtin.rebind import downcast
 from std.reflection import reflect
+
+from .field import Rename
+from .utils import Base
 
 
 @fieldwise_init
@@ -36,35 +38,50 @@ struct RenamePolicy(Equatable, ImplicitlyCopyable, Writable):
             writer.write("RenamePolicy(", self._value, ")")
 
 
-# A struct annotates its field-naming convention by conforming to `RenameAll`
-# and declaring `FieldRenamePolicy`. The reflection default reads it via
-# `downcast` (Mojo
-# can't reflect on parameters), the same mechanism `Field` uses for its members.
-trait RenameAll:
-    comptime FieldRenamePolicy: RenamePolicy
+# Struct attributes, attached above the struct like field attributes:
+# `@__annotation(RenameAll(.CamelCase), DenyUnknownFields())`.
+comptime struct_annotations[T: AnyType] = reflect[T].annotations()
+
+
+# How many annotations of type `A` struct `T` carries.
+def count_struct_annotations[T: AnyType, A: AnyType]() -> Int:
+    comptime Ts = type_of(struct_annotations[T]).Ts
+    var n = 0
+    comptime for j in range(Ts.length):
+        comptime if Ts[j] == A:
+            n += 1
+    return n
+
+
+# The naming convention every field without its own `Rename` is written in.
+@fieldwise_init
+struct RenameAll(Base):
+    var policy: RenamePolicy
 
 
 # Raised-on instead of ignored: an unknown wire field makes deserialization fail.
-trait DenyUnknownFields:
+@fieldwise_init
+struct DenyUnknownFields(Base):
     pass
 
 
-# A stable wire tag for a type used as a `Variant` arm. Without it the tag is
-# `reflect[AT].name()` — a canonical name that embeds module paths and stdlib
-# spellings (`Int64` renders as `SIMD[DType.int64, 1]`), so moving a type
-# between modules or a stdlib respelling silently breaks the wire. Read via
-# `downcast` the way `FieldMeta` is. Note that name tags are best treated as
+# The tag `AT` rides the wire under when it is a `Variant` arm: a `Rename` on
+# the struct, or its canonical `reflect` name as the fallback. That fallback
+# embeds module paths and stdlib spellings (`Int64` renders as
+# `SIMD[DType.int64, 1]`), so moving a type between modules or a stdlib
+# respelling silently breaks the wire. Name tags are best treated as
 # debug/diagnostic; the arm *index* (also on the `begin_enum` surface) is the
 # stable default real formats should key on.
-trait ArmName:
-    comptime serde_arm_name: StaticString
-
-
-# The tag `AT` rides the wire under when it is a `Variant` arm: its declared
-# `ArmName`, or its canonical `reflect` name as the fallback.
 def arm_tag[AT: AnyType]() -> String:
-    comptime if conforms_to(AT, ArmName):
-        return String(downcast[AT, ArmName].serde_arm_name)
+    comptime assert (
+        count_struct_annotations[AT, Rename]() <= 1
+    ), "a struct may carry at most one Rename"
+    comptime anns = struct_annotations[AT]
+    comptime Ts = type_of(anns).Ts
+    comptime for j in range(Ts.length):
+        comptime if Ts[j] == Rename:
+            comptime name = rebind[Rename](anns[j]).name
+            return String(name)
     return String(reflect[AT].name())
 
 

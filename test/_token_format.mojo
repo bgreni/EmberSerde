@@ -16,8 +16,6 @@
 #
 # It follows the same pointer-handle pattern as `_debug_format.mojo`.
 
-from std.reflection import reflect
-
 from emberserde.serialize import (
     Serializer,
     SeqSerState,
@@ -93,10 +91,7 @@ struct TokenStructSer[origin: MutOrigin](StructSerState):
         # `reflect[T]` in the same declaration order. That only lines up if
         # `idx` is a declaration index — a wire position diverges from it
         # after a `Skip` — so check it names the field we were handed.
-        comptime r = reflect[T]
-        comptime expected = static_wire_name[
-            T, r.field_types()[idx], r.field_names()[idx]
-        ]()
+        comptime expected = static_wire_name[T, idx]()
         if field_name != expected:
             raise SerializationError(
                 String(t"field {idx} is '{expected}', got '{field_name}'"),

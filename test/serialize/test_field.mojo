@@ -1,20 +1,17 @@
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string
-from emberserde.field import Field, Rename, Skip
-
-
-# A bare `Field` is transparent — the wrapper only takes effect as a struct
-# member walked by the reflection default.
-def test_field_serializes_transparently() raises:
-    assert_equal(debug_string(Field[Int](value=5)), "5")
-    assert_equal(debug_string(Field[String](value="hi")), '"hi"')
+from emberserde.field import Rename, Skip
 
 
 @fieldwise_init
 struct Rec(Copyable, Movable):
     var a: Int
-    var renamed: Rename[Int, String("b")]
-    var hidden: Skip[Int]
+
+    @__annotation(Rename("b"))
+    var renamed: Int
+
+    @__annotation(Skip())
+    var hidden: Int
 
 
 def test_field_rename_and_skip() raises:

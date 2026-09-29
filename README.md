@@ -223,20 +223,26 @@ overflow instead of wrapping.
 
 ### Field attributes
 
-Mojo has no field decorators yet, so attributes ride on a `Field` wrapper
-type. `Rename`, `Skip`, and `Defaulted` are aliases for the common cases; read
-the inner value back with `field[]` or `.value`.
+Attributes are attached with Mojo's (experimental) `@__annotation` decorator.
+Fields keep their own type, so there is nothing to unwrap.
 
 ```mojo
-from emberserde import Field, Rename, Skip, Defaulted
+from emberserde import Alias, Default, Rename, Skip, Validate
 
 
 @fieldwise_init
 struct User(Copyable, Defaultable, Movable):
-    var name: Rename[String, "userName"]
-    var debug: Skip[Bool]
-    var retries: Defaulted[Int, 3]
-    var email: Field[String, extra_names=List[String](["mail"])]
+    @__annotation(Rename("userName"))
+    var name: String
+
+    @__annotation(Skip())
+    var debug: Bool
+
+    @__annotation(Default(3), Validate(lambda (x: Int) -> Bool: x >= 0))
+    var retries: Int
+
+    @__annotation(Alias("mail"))
+    var email: String
 
     def __init__(out self):
         ...
@@ -247,23 +253,155 @@ struct User(Copyable, Defaultable, Movable):
 
 | Attribute | Effect |
 |---|---|
-| `rename` | Wire name differs from the declared name. |
-| `extra_names` | Additional names accepted on read (aliases). |
-| `skip` | Never written; filled from the default on read. |
-| `default` | Value used when the field is absent from the wire. Works for non-`Defaultable` types. |
-| `validate` | `def(T) -> Bool` run after reading; failure raises `InvalidValue`. |
+| `Rename(name)` | Wire name differs from the declared name. |
+| `Alias(name)` | Additional name accepted on read. Repeat for more. |
+| `Skip` | Never written; filled from the default on read. |
+| `Default(value)` | Value used when the field is absent from the wire. Works for non-`Defaultable` types. Must match the field's type exactly (`Default(Int64(3))` on an `Int64`). |
+| `Validate(f, msg=)` | `def(T) -> Bool` run after reading; failure raises `InvalidValue` with `msg` (default "Validation failed"). One of the checks in [Validation](#validation). |
+| `Transform(f)` | Reads the wire value as `f`'s argument type and stores `f(value)`. See [Validation](#validation). |
+| `SerializeWith(f)` | Writes `f(value)` in place of the field; reading is unchanged. See [Validation](#validation). |
 
-### Struct modifiers
+### Validation
 
-Struct-level settings are traits with an associated `comptime` member:
+Checks are field attributes too. The framework runs a field's checks right
+after reading it, in order; the first failure raises `InvalidValue` with the
+check's message, and the error path names the field.
 
 ```mojo
-from emberserde import RenameAll, RenamePolicy, DenyUnknownFields
+from emberserde import AnyOf, Enum, Eq, NonEmpty, Not, Range, Size
 
 
 @fieldwise_init
-struct Config(Copyable, Defaultable, Movable, RenameAll, DenyUnknownFields):
-    comptime FieldRenamePolicy = RenamePolicy.CamelCase
+struct Server(Defaultable, Movable):
+    @__annotation(Range(1, 65535, msg="bad port"))
+    var port: Int
+
+    @__annotation(NonEmpty(), Size(1, 64))
+    var host: String
+
+    @__annotation(Enum["dev", "prod"]())
+    var env: String
+
+    @__annotation(AnyOf(Eq(0), Range(10, 20)), Not(Eq(13)))
+    var level: Int
+
+    def __init__(out self):
+        ...
+```
+
+| Check | Passes when | Default message |
+|---|---|---|
+| `Validate(f)` | `f(value)` is `True` | Validation failed |
+| `Range(min, max)` | `min <= value <= max` | Value out of range |
+| `Eq(value)` | equal to `value` | Value is not equal |
+| `Enum[a, b, ...]()` | equal to one of the listed values | Value not in options |
+| `Size(min, max)` | length within bounds (`String` counts bytes) | Value out of size range |
+| `NonEmpty()` | length above zero | Value must not be empty |
+| `Unique()` | no two elements equal | Values are not unique |
+| `Not(check)` | `check` fails | Expected validator to fail |
+| `AnyOf(c1, c2, ...)` | at least one check passes | Value not in options |
+| `OneOf(c1, c2, ...)` | exactly one check passes | Value must match exactly one option |
+| `NoneOf(c1, c2, ...)` | no check passes | Value matched a rejected validator |
+
+- Every check takes an optional trailing `msg`: `Range(1, 65535, msg="bad port")`, `Validate(f, "must be even")`.
+- Checks carrying a value (`Validate`, `Range`, `Eq`, `Enum`) must match the field's type exactly, like `Default`: `Range(Int64(0), Int64(10))` on an `Int64`. Bare literals infer `Int`, `Float64` and `String`.
+- A value filled in by `Default` (or `T()`) for a missing key is not checked.
+- `Unique` compares every pair, so it is O(n²). On untrusted input, bound the length first: `@__annotation(Size(0, 1000), Unique())` (checks run in order).
+- Checks run only while deserializing a struct's fields. Serialization ignores them. A check on an `Optional` field fails to compile; write a `Validate` over the `Optional` instead.
+- `Enum` is a set-membership check, unrelated to the `Variant` enums below.
+- `Validate` moved from `emberserde.field` to `emberserde.validate`; `from emberserde import Validate` is unchanged.
+
+**Your own checks.** Conform to `FieldCheck`:
+
+```mojo
+from emberserde import FieldCheck
+
+
+@fieldwise_init
+struct IsEven(FieldCheck):
+    def check[T: AnyType](self, value: T) -> Bool:
+        comptime assert T == Int, "IsEven needs an Int field"
+        return rebind[Int](value) % 2 == 0
+
+    def message(self) -> StaticString:
+        return "must be even"
+```
+
+**Converting on read.** `Transform(f)` reads the wire value as `f`'s argument
+type and stores `f(value)`. It runs on read only: the field is written back as
+its own type. If `f` raises, the read fails with `InvalidValue` and the raised
+text. A field takes at most one `Transform`, and its checks run on the
+converted value.
+
+```mojo
+from emberserde import Transform
+
+
+def parse_level(s: String) raises -> Int:
+    if s == "low":
+        return 1
+    raise Error("unknown level: " + s)
+
+
+@fieldwise_init
+struct Job(Movable):
+    @__annotation(Transform(parse_level))
+    var level: Int  # wire: {"level": "low"}
+```
+
+`clamp[lo, hi]` pairs with `Transform` to pull an out-of-range value into
+range instead of rejecting it: `@__annotation(Transform(clamp[0, 100]))`.
+
+**Converting on write.** `SerializeWith(f)` writes `f(value)` in place of the
+field; reading is unchanged. If `f` raises, the write fails with
+`InvalidValue` and the raised text. A field takes at most one.
+
+```mojo
+from emberserde import SerializeWith
+
+
+def redact(s: String) -> String:
+    return "********"
+
+
+@fieldwise_init
+struct Login(Movable):
+    var user: String
+
+    @__annotation(SerializeWith(redact))
+    var password: String  # read as sent, written as "********"
+```
+
+**Rules across fields.** Put a check on the struct itself. It runs once every
+field is read and any missing ones are filled, and sees the whole value; the
+error path is the struct's own.
+
+```mojo
+from emberserde import Validate
+
+
+@__annotation(
+    Validate(
+        lambda (d: DateRange) -> Bool: d.start <= d.end, "start must be <= end"
+    )
+)
+@fieldwise_init
+struct DateRange(Movable):
+    var start: Int
+    var end: Int
+```
+
+### Struct modifiers
+
+Struct-level settings are annotations too, placed above the struct:
+
+```mojo
+from emberserde import DenyUnknownFields, RenameAll
+
+
+@__annotation(RenameAll(.CamelCase), DenyUnknownFields())
+@fieldwise_init
+struct Config(Copyable, Defaultable, Movable):
     var api_key: String
     var max_retries: Int
 
@@ -274,7 +412,7 @@ struct Config(Copyable, Defaultable, Movable, RenameAll, DenyUnknownFields):
 # {"apiKey":"k","maxRetries":5,"extra":1} -> raises UnknownField
 ```
 
-`RenamePolicy` offers `SnakeCase`, `CamelCase`, `PascalCase`, `KebabCase`,
+A field's own `Rename` wins over `RenameAll`. `RenamePolicy` offers `SnakeCase`, `CamelCase`, `PascalCase`, `KebabCase`,
 `ScreamingSnakeCase`, `ScreamingKebabCase`, `LowerCase`, and `UpperCase`.
 Declared names are tokenized first, so the policy works whatever convention
 the field was written in.
@@ -282,24 +420,24 @@ the field was written in.
 ### Enums
 
 Mojo has no native enums; `Variant` fills the role and is externally tagged
-on the wire. Declare `ArmName` on each arm for a stable tag, otherwise the tag
-falls back to the arm's canonical type name (which embeds module paths and
+on the wire. Put a `Rename` on each arm's struct for a stable tag, otherwise
+the tag falls back to the arm's canonical type name (which embeds module paths and
 stdlib spellings, so treat that as debug-only).
 
 ```mojo
 from std.utils import Variant
-from emberserde import ArmName
+from emberserde import Rename
 
 
+@__annotation(Rename("circle"))
 @fieldwise_init
-struct Circle(ArmName, Copyable, Movable):
-    comptime serde_arm_name: StaticString = "circle"
+struct Circle(Copyable, Movable):
     var radius: Float64
 
 
+@__annotation(Rename("square"))
 @fieldwise_init
-struct Square(ArmName, Copyable, Movable):
-    comptime serde_arm_name: StaticString = "square"
+struct Square(Copyable, Movable):
     var side: Float64
 
 
@@ -316,9 +454,9 @@ On read, the reflection default matches wire fields back onto declared fields
 in any order and then applies these rules:
 
 - An `Optional` field absent from the wire becomes `None`.
-- A `Skip` or `Defaulted` field absent from the wire takes its default.
+- A `Skip` or `Default` field absent from the wire takes its default.
 - Any other absent field raises `MissingField`.
-- An unknown wire field is skipped, unless the struct is `DenyUnknownFields`.
+- An unknown wire field is skipped, unless the struct carries `DenyUnknownFields()`.
 - A field appearing twice raises `DuplicateField`.
 - Two fields resolving to the same wire name fail the build.
 
@@ -416,9 +554,6 @@ assertion.
 
 ## Roadmap
 
-- **Decorator-based attributes.** `@rename("hostName")` in place of
-  `Rename[String, "hostName"]`, once field decorators land, so values no
-  longer need unwrapping out of `Field`.
 - **IO abstraction.** Only in-memory input is supported today. Streams and
   files follow once Mojo's IO story settles.
 

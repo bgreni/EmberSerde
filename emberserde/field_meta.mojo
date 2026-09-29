@@ -3,32 +3,41 @@ from std.collections.string.string_span import get_static_string
 from std.reflection import reflect
 
 from emberserde.error import DeserializationError, DerErrorKind
+from emberserde.field import Alias, Rename, Skip, TypedAnnotation
 from emberserde.struct_modifiers import (
     DenyUnknownFields,
     RenameAll,
     apply_rename_policy,
+    count_struct_annotations,
+    struct_annotations,
 )
 
 
-# Field-attribute metadata, exposed as comptime members so the reflection
-# defaults can read a `Field`'s rename/alias/skip/default config back off the
-# erased field type via `downcast` — Mojo can't reflect on a type's comptime
-# *parameters*, so the wrapper republishes them as members instead. Lives in its
-# own module to break the `serialize`/`deserialize` <-> `field` import cycle.
-trait FieldMeta(Deinitable, Movable):
-    comptime serde_name: Optional[String]
-    comptime serde_extra: Optional[List[String]]
-    comptime serde_skip: Bool
-    comptime serde_fill_if_missing: Bool
+# Field `i`'s annotations, bound at comptime: indexing the tuple at runtime
+# would materialize every value in it.
+comptime field_annotations[T: AnyType, i: Int] = reflect[T].field_annotations[
+    i
+]()
 
-    # The value a missing/skipped field materializes as: the explicit
-    # `default` if given, else `T()`. Lives here (not on `Defaultable`)
-    # because an explicit default needs no `T()` — `Defaulted[T, v]` of a
-    # non-Defaultable `T` still fills. `Field` comptime-asserts inside when
-    # neither exists, i.e. exactly when the field genuinely cannot be filled.
-    @staticmethod
-    def serde_filled() -> Self:
-        ...
+
+# How many annotations of type `A` field `i` carries. Every lookup goes
+# through here, so it is also where a mistyped `Default`/`Validate` fails.
+def count_annotations[T: AnyType, i: Int, A: AnyType]() -> Int:
+    comptime Ts = type_of(field_annotations[T, i]).Ts
+    var n = 0
+    comptime for j in range(Ts.length):
+        comptime if conforms_to(Ts[j], TypedAnnotation):
+            comptime assert (
+                downcast[Ts[j], TypedAnnotation].Type
+                == reflect[T].field_types()[i]
+            ), (
+                "a typed annotation (Default, Transform, SerializeWith,"
+                " Validate, Range, Eq, Enum) must match its field's type"
+                " exactly"
+            )
+        comptime if Ts[j] == A:
+            n += 1
+    return n
 
 
 # `Optional` fields are the one shape allowed to be absent on the wire: a
@@ -41,47 +50,49 @@ def __is_optional[T: AnyType]() -> Bool:
     return reflect[T].base_name() == "Optional"
 
 
-# Whether field `i` drops out of the wire entirely (`Field[..., skip=True]`).
-def is_skipped[FT: AnyType]() -> Bool:
-    comptime if conforms_to(FT, FieldMeta):
-        return downcast[FT, FieldMeta].serde_skip
-    else:
-        return False
+# Whether field `i` drops out of the wire entirely (`Skip`).
+def is_skipped[T: AnyType, i: Int]() -> Bool:
+    return count_annotations[T, i, Skip]() > 0
 
 
-# The wire name field `i` serializes under. Precedence: a `Field`'s explicit
-# `rename` > the struct's `rename_all` policy > the declared name.
-def wire_name[T: AnyType, FT: AnyType](declared: StaticString) -> String:
-    comptime if conforms_to(FT, FieldMeta):
-        comptime FM = downcast[FT, FieldMeta]
-        comptime if FM.serde_name:
-            return String(FM.serde_name.value())
-    comptime if conforms_to(T, RenameAll):
-        return apply_rename_policy[downcast[T, RenameAll].FieldRenamePolicy](
-            declared
-        )
-    else:
-        return String(declared)
+# The wire name field `i` serializes under. Precedence: a `Rename` >
+# the struct's `rename_all` policy > the declared name.
+def wire_name[T: AnyType, i: Int]() -> String:
+    comptime assert (
+        count_annotations[T, i, Rename]() <= 1
+    ), "a field may carry at most one Rename"
+    comptime anns = field_annotations[T, i]
+    comptime Ts = type_of(anns).Ts
+    comptime for j in range(Ts.length):
+        comptime if Ts[j] == Rename:
+            comptime name = rebind[Rename](anns[j]).name
+            return String(name)
+    comptime declared = reflect[T].field_names()[i]
+    comptime assert (
+        count_struct_annotations[T, RenameAll]() <= 1
+    ), "a struct may carry at most one RenameAll"
+    comptime sanns = struct_annotations[T]
+    comptime STs = type_of(sanns).Ts
+    comptime for j in range(STs.length):
+        comptime if STs[j] == RenameAll:
+            comptime policy = rebind[RenameAll](sanns[j]).policy
+            return apply_rename_policy[policy](declared)
+    return String(declared)
 
 
 # `wire_name` computed at comptime and interned in static memory, so
 # per-record work is a slice comparison — no `String` building.
-def static_wire_name[
-    T: AnyType, FT: AnyType, declared: StaticString
-]() -> StaticString:
-    return get_static_string[wire_name[T, FT](declared)]()
+def static_wire_name[T: AnyType, i: Int]() -> StaticString:
+    return get_static_string[wire_name[T, i]()]()
 
 
 # The wire names `T` actually emits (skipped fields drop out, rename/policy
 # applied), in declaration order.
 def wire_field_names[T: AnyType]() -> List[String]:
     var names = List[String]()
-    comptime r = reflect[T]
-    comptime for i in range(r.field_count()):
-        comptime FT = r.field_types()[i]
-        comptime if not is_skipped[FT]():
-            comptime declared = r.field_names()[i]
-            names.append(wire_name[T, FT](declared))
+    comptime for i in range(reflect[T].field_count()):
+        comptime if not is_skipped[T, i]():
+            names.append(wire_name[T, i]())
     return names^
 
 
@@ -141,25 +152,22 @@ def _eq_static[W: StaticString](name: StringSlice) -> Bool:
 
 
 # Whether an incoming wire `name` binds field `i`: it matches the field's wire
-# name (rename > policy > declared) or any explicit `extra_names` alias. A
-# skipped field never matches. Aliases are taken verbatim — `rename_all` does
-# not reshape them, mirroring serde. All candidate names are comptime-interned;
-# the runtime work is slice comparisons only.
-def name_matches[
-    T: AnyType, FT: AnyType, declared: StaticString
-](name: StringSlice) -> Bool:
-    comptime if is_skipped[FT]():
+# name (rename > policy > declared) or any `Alias`. A skipped field never
+# matches. Aliases are taken verbatim — `rename_all` does not reshape them,
+# mirroring serde. All candidate names are comptime-interned; the runtime work
+# is slice comparisons only.
+def name_matches[T: AnyType, i: Int](name: StringSlice) -> Bool:
+    comptime if is_skipped[T, i]():
         return False
-    if _eq_static[static_wire_name[T, FT, declared]()](name):
+    if _eq_static[static_wire_name[T, i]()](name):
         return True
-    comptime if conforms_to(FT, FieldMeta):
-        comptime FM = downcast[FT, FieldMeta]
-        comptime if FM.serde_extra:
-            comptime extra = FM.serde_extra.value()
-            comptime for j in range(len(extra)):
-                comptime al = get_static_string[extra[j]]()
-                if _eq_static[al](name):
-                    return True
+    comptime anns = field_annotations[T, i]
+    comptime Ts = type_of(anns).Ts
+    comptime for j in range(Ts.length):
+        comptime if Ts[j] == Alias:
+            comptime al = rebind[Alias](anns[j]).name
+            if _eq_static[al](name):
+                return True
     return False
 
 
@@ -176,12 +184,10 @@ comptime UNKNOWN_FIELD = -1
 def field_index[
     T: AnyType
 ](name: StringSlice) raises DeserializationError -> Int:
-    comptime r = reflect[T]
-    comptime for i in range(r.field_count()):
-        comptime declared = r.field_names()[i]
-        if name_matches[T, r.field_types()[i], declared](name):
+    comptime for i in range(reflect[T].field_count()):
+        if name_matches[T, i](name):
             return i
-    comptime if conforms_to(T, DenyUnknownFields):
+    comptime if count_struct_annotations[T, DenyUnknownFields]() > 0:
         raise DeserializationError(
             String(t"Unknown field: {name}"),
             DerErrorKind.UnknownField,
@@ -195,9 +201,8 @@ def field_index[
 # none. Skipped fields never reach the wire, so stepping `0, 1, 2, ...`
 # instead would misalign every value after a `Skip`.
 def next_wire_field[T: AnyType](start: Int) -> Optional[Int]:
-    comptime r = reflect[T]
-    comptime for i in range(r.field_count()):
-        comptime if not is_skipped[r.field_types()[i]]():
+    comptime for i in range(reflect[T].field_count()):
+        comptime if not is_skipped[T, i]():
             if i >= start:
                 return i
     return None

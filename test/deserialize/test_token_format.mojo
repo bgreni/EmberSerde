@@ -7,7 +7,7 @@ from std.testing import (
 )
 from _token_format import from_tokens
 from emberserde.field import Rename, Skip
-from emberserde.struct_modifiers import RenameAll, RenamePolicy
+from emberserde.struct_modifiers import RenameAll
 
 
 @fieldwise_init
@@ -116,18 +116,22 @@ def test_nested_tuple() raises:
     assert_equal(r[1][1], Int64(2))
 
 
+@__annotation(RenameAll(.CamelCase))
 @fieldwise_init
-struct ModifiedRec(Copyable, Defaultable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.CamelCase
+struct ModifiedRec(Copyable, Defaultable, Movable):
     var first_name: Int
-    var user_age: Rename[Int, String("age")]
-    var hidden: Skip[Int]
+
+    @__annotation(Rename("age"))
+    var user_age: Int
+
+    @__annotation(Skip())
+    var hidden: Int
     var last: Int
 
     def __init__(out self):
         self.first_name = 0
-        self.user_age = Rename[Int, String("age")](value=0)
-        self.hidden = Skip[Int](value=0)
+        self.user_age = 0
+        self.hidden = 0
         self.last = 0
 
 
@@ -138,8 +142,8 @@ def test_modifier_struct() raises:
     # names, which made every renamed field fall through to skip_value.
     var r = from_tokens[ModifiedRec](["1", "2", "3"])
     assert_equal(r.first_name, 1)
-    assert_equal(r.user_age.value, 2)
-    assert_equal(r.hidden.value, 0)
+    assert_equal(r.user_age, 2)
+    assert_equal(r.hidden, 0)
     assert_equal(r.last, 3)
 
 

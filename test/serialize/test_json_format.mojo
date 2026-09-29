@@ -2,7 +2,7 @@ from std.testing import assert_equal, TestSuite
 from std.utils import Variant
 from _json_format import to_json, JsonValue, JsonArray, JsonObject, JsonNull
 from emberserde.field import Rename
-from emberserde.struct_modifiers import RenameAll, RenamePolicy
+from emberserde.struct_modifiers import RenameAll
 
 
 @fieldwise_init
@@ -18,16 +18,17 @@ struct Nested(Copyable, Movable):
     var note: Optional[Int64]
 
 
+@__annotation(RenameAll(.CamelCase))
 @fieldwise_init
-struct CamelRec(Copyable, Movable, RenameAll):
-    comptime FieldRenamePolicy = RenamePolicy.CamelCase
+struct CamelRec(Copyable, Movable):
     var first_name: Int
     var age: Int
 
 
 @fieldwise_init
 struct Renamed(Copyable, Movable):
-    var keep_me: Rename[Int, String("kept")]
+    @__annotation(Rename("kept"))
+    var keep_me: Int
 
 
 def test_primitives() raises:

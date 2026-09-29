@@ -2,7 +2,7 @@ from std.utils import Variant
 from std.testing import assert_equal, TestSuite
 from _debug_format import debug_string
 from _token_format import to_tokens
-from emberserde.struct_modifiers import ArmName
+from emberserde.field import Rename
 
 
 @fieldwise_init
@@ -28,12 +28,12 @@ def test_variant_string_arm() raises:
     assert_equal(debug_string(v), 'String("hi")')
 
 
-# An `ArmName` declaration replaces the canonical type name as the tag, making
+# A struct-level `Rename` replaces the canonical type name as the tag, making
 # it a stable wire identifier (module moves and stdlib respellings can't
 # change it).
+@__annotation(Rename("named"))
 @fieldwise_init
-struct Named(ArmName, Copyable, Movable):
-    comptime serde_arm_name: StaticString = "named"
+struct Named(Copyable, Movable):
     var n: Int
 
 
