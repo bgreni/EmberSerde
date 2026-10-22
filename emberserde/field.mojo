@@ -67,7 +67,7 @@ struct Transform[InT: Base, OutT: Base](Transformer):
     var f: def(Self.InT) thin raises -> Self.OutT
 
     def apply(self, var value: Self.In) raises -> Self.Out:
-        return self.f(value^)
+        return self.f(value)
 
 
 # Changes what is written for a field: the framework serializes

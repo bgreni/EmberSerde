@@ -136,6 +136,15 @@ def _transform_count[T: AnyType, i: Int]() -> Int:
     return n
 
 
+# The position of field `i`'s `Transformer` among its annotations.
+def _transform_index[T: AnyType, i: Int]() -> Int:
+    comptime Ts = type_of(field_annotations[T, i]).Ts
+    comptime for j in range(Ts.length):
+        comptime if conforms_to(Ts[j], Transformer):
+            return j
+    return -1
+
+
 # `a.apply(value)` with its untyped `Error` turned into `InvalidValue`. Its
 # own function because one `try` cannot mix typed and untyped raises.
 def _apply_transform[
@@ -147,12 +156,14 @@ def _apply_transform[
         raise DeserializationError(String(e), DerErrorKind.InvalidValue)
 
 
-# Reads field `i` into `t`: through its `Transform` when it carries one, else
-# as the field's own type.
-def _read_field[
+# Field `i`'s next value off the wire: through its `Transform` when it
+# carries one, else as the field's own type.
+def _read_value[
     T: AnyType, i: Int
-](mut st: Some[StructDerState], mut t: T) raises DeserializationError:
-    # Also what lets `field_ref` below be assigned into.
+](
+    mut st: Some[StructDerState],
+    out result: downcast[reflect[T].field_types()[i], Base],
+) raises DeserializationError:
     comptime assert conforms_to(
         reflect[T].field_types()[i], Base
     ), "field types must be Movable & Deinitable"
@@ -161,17 +172,43 @@ def _read_field[
     comptime assert n <= 1, "a field may carry at most one Transform"
     comptime if n == 1:
         comptime anns = field_annotations[T, i]
-        comptime Ts = type_of(anns).Ts
-        comptime for j in range(Ts.length):
-            comptime if conforms_to(Ts[j], Transformer):
-                comptime TT = downcast[Ts[j], Transformer]
-                comptime a = rebind[TT](anns[j])
-                var wire = st.expect_field_value[TT.In]()
-                reflect[T].field_ref[i](t) = rebind_var[FT](
-                    _apply_transform(materialize[a](), wire^)
-                )
+        comptime j = _transform_index[T, i]()
+        comptime TT = downcast[type_of(anns).Ts[j], Transformer]
+        comptime a = rebind[TT](anns[j])
+        var wire = st.expect_field_value[TT.In]()
+        result = rebind_var[FT](_apply_transform(materialize[a](), wire^))
     else:
-        reflect[T].field_ref[i](t) = st.expect_field_value[FT]()
+        result = st.expect_field_value[FT]()
+
+
+# Reads field `i` into `t`, replacing what it held.
+def _read_field[
+    T: AnyType, i: Int
+](mut st: Some[StructDerState], mut t: T) raises DeserializationError:
+    # Also what lets `field_ref` below be assigned into.
+    comptime assert conforms_to(
+        reflect[T].field_types()[i], Base
+    ), "field types must be Movable & Deinitable"
+    reflect[T].field_ref[i](t) = _read_value[T, i](st)
+
+
+# Field `i` is on the wire again: what that means is the format's
+# `repeat_policy`.
+def _read_repeat[
+    T: AnyType, i: Int, policy: RepeatPolicy
+](mut st: Some[StructDerState], mut t: T) raises DeserializationError:
+    comptime FT = reflect[T].field_types()[i]
+    comptime if policy.append_seqs and conforms_to(FT, Appendable):
+        comptime AT = downcast[FT, Appendable]
+        var more = _read_value[T, i](st)
+        rebind[AT](reflect[T].field_ref[i](t)).serde_append(
+            rebind_var[AT](more^)
+        )
+    elif policy.last_wins:
+        _read_field[T, i](st, t)
+    else:
+        comptime name = reflect[T].field_names()[i]
+        raise _duplicate_field(name)
 
 
 # Runs every `FieldCheck` annotation on the struct itself against the whole,
@@ -228,6 +265,29 @@ def checked_scalar[
                 DerErrorKind.InvalidValue,
             )
         return result
+
+
+# What a repeated struct field means. The default makes any repeat a
+# `DuplicateField`. `append_seqs` extends an `Appendable` field (`List`,
+# `Dict`) with each later occurrence; `last_wins` replaces any other field.
+# Merging a repeated struct is beyond either: only the format still has its
+# input, so a format whose repeats merge must hand back every occurrence so
+# far as one value (`last_wins` then keeps that).
+@fieldwise_init
+struct RepeatPolicy(ImplicitlyCopyable, Movable):
+    var append_seqs: Bool
+    var last_wins: Bool
+
+    comptime Error = Self(append_seqs=False, last_wins=False)
+    comptime LastWins = Self(append_seqs=False, last_wins=True)
+    comptime AppendSeqs = Self(append_seqs=True, last_wins=False)
+    comptime AppendSeqsLastWins = Self(append_seqs=True, last_wins=True)
+
+
+# A collection a repeated field can extend under `RepeatPolicy.append_seqs`.
+trait Appendable(Movable):
+    def serde_append(mut self, var other: Self):
+        ...
 
 
 trait Deserializable(Movable):
@@ -316,6 +376,10 @@ trait EnumDerState(Deinitable):
 
 
 trait Deserializer:
+    # A comptime member, so the struct loop compiles only the branch the
+    # format uses.
+    comptime repeat_policy: RepeatPolicy = RepeatPolicy.Error
+
     comptime SeqType: SeqDerState
     comptime MapType: MapDerState
     comptime StructType: StructDerState
@@ -444,21 +508,16 @@ def deserialize_struct[
                 # A skipped field never binds, whatever index the format
                 # hands back.
                 comptime if not is_skipped[T, i]():
-                    # Index at comptime so only the one name
-                    # materializes, not the whole (non-ImplicitlyCopyable)
-                    # field-names array.
-                    comptime declared_name = names[i]
                     if idx == i:
-                        if seen.contains[i]():
-                            raise _duplicate_field(declared_name)
-                        seen.add[i]()
                         matched = True
-                        comptime assert conforms_to(
-                            r.field_types()[i], Base
-                        ), "field types must be Movable & Deinitable"
                         current = i
-                        _read_field[T, i](st, result)
-                        _check_field[T, i](result)
+                        if seen.contains[i]():
+                            _read_repeat[T, i, type_of(d).repeat_policy](
+                                st, result
+                            )
+                        else:
+                            seen.add[i]()
+                            _read_field[T, i](st, result)
                         current = -1
             if not matched:
                 # `field_index` already raised with the key's name; this
@@ -473,6 +532,13 @@ def deserialize_struct[
                     )
                 else:
                     st.skip_value()
+        # After the loop, so a repeated field is checked once, on the value
+        # its repeats left.
+        comptime for i in range(r.field_count()):
+            comptime if not is_skipped[T, i]():
+                if seen.contains[i]():
+                    current = i
+                    _check_field[T, i](result)
     except e:
         comptime for i in range(r.field_count()):
             comptime declared_name = names[i]

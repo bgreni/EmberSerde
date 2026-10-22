@@ -36,6 +36,7 @@ from emberserde.deserialize import (
     Deserializer,
     Deserializable,
     RawKind,
+    RepeatPolicy,
     SelfDescribingDeserializer,
     SeqDerState,
     MapDerState,
@@ -570,7 +571,7 @@ struct JsonCursor(Movable):
 
 
 @fieldwise_init
-struct JsonSeqDe[origin: MutOrigin](SeqDerState):
+struct JsonSeqDe[origin: MutOrigin, repeat: RepeatPolicy](SeqDerState):
     var cursor: Pointer[JsonCursor, Self.origin]
 
     def has_next(mut self) raises DeserializationError -> Bool:
@@ -583,7 +584,7 @@ struct JsonSeqDe[origin: MutOrigin](SeqDerState):
         return True
 
     def expect_element[T: AnyType](mut self) raises DeserializationError -> T:
-        var sub = JsonDeserializer(cursor=self.cursor)
+        var sub = JsonDeserializer[Self.origin, Self.repeat](cursor=self.cursor)
         return deserialize[T](sub)
 
     def end(mut self) raises DeserializationError:
@@ -592,7 +593,7 @@ struct JsonSeqDe[origin: MutOrigin](SeqDerState):
 
 
 @fieldwise_init
-struct JsonMapDe[origin: MutOrigin](MapDerState):
+struct JsonMapDe[origin: MutOrigin, repeat: RepeatPolicy](MapDerState):
     var cursor: Pointer[JsonCursor, Self.origin]
 
     def has_next(mut self) raises DeserializationError -> Bool:
@@ -607,7 +608,9 @@ struct JsonMapDe[origin: MutOrigin](MapDerState):
     def expect_key[T: AnyType](mut self) raises DeserializationError -> T:
         self.cursor[].skip_ws()
         comptime if reflect[T].base_name() == "String":
-            var sub = JsonDeserializer(cursor=self.cursor)
+            var sub = JsonDeserializer[Self.origin, Self.repeat](
+                cursor=self.cursor
+            )
             return deserialize[T](sub)
         else:
             # Keys ride the wire as JSON strings (serde_json's stringify):
@@ -615,14 +618,16 @@ struct JsonMapDe[origin: MutOrigin](MapDerState):
             self.cursor[].expect_lit('"')
             var contents = self.cursor[].read_string_contents()
             var kcursor = JsonCursor(contents^, 0)
-            var sub = JsonDeserializer(cursor=Pointer(to=kcursor))
+            var sub = JsonDeserializer[origin_of(kcursor), Self.repeat](
+                cursor=Pointer(to=kcursor)
+            )
             return deserialize[T](sub)
 
     def expect_value[T: AnyType](mut self) raises DeserializationError -> T:
         self.cursor[].skip_ws()
         self.cursor[].expect_lit(":")
         self.cursor[].skip_ws()
-        var sub = JsonDeserializer(cursor=self.cursor)
+        var sub = JsonDeserializer[Self.origin, Self.repeat](cursor=self.cursor)
         return deserialize[T](sub)
 
     def end(mut self) raises DeserializationError:
@@ -631,7 +636,7 @@ struct JsonMapDe[origin: MutOrigin](MapDerState):
 
 
 @fieldwise_init
-struct JsonStructDe[origin: MutOrigin](StructDerState):
+struct JsonStructDe[origin: MutOrigin, repeat: RepeatPolicy](StructDerState):
     var cursor: Pointer[JsonCursor, Self.origin]
 
     def expect_field_index[
@@ -654,7 +659,7 @@ struct JsonStructDe[origin: MutOrigin](StructDerState):
     def expect_field_value[
         T: AnyType
     ](mut self) raises DeserializationError -> T:
-        var sub = JsonDeserializer(cursor=self.cursor)
+        var sub = JsonDeserializer[Self.origin, Self.repeat](cursor=self.cursor)
         return deserialize[T](sub)
 
     def skip_value(mut self) raises DeserializationError:
@@ -667,7 +672,7 @@ struct JsonStructDe[origin: MutOrigin](StructDerState):
 
 
 @fieldwise_init
-struct JsonTupleDe[origin: MutOrigin](TupleDerState):
+struct JsonTupleDe[origin: MutOrigin, repeat: RepeatPolicy](TupleDerState):
     var cursor: Pointer[JsonCursor, Self.origin]
     var first: Bool
 
@@ -677,7 +682,7 @@ struct JsonTupleDe[origin: MutOrigin](TupleDerState):
             self.cursor[].expect_lit(",")
             self.cursor[].skip_ws()
         self.first = False
-        var sub = JsonDeserializer(cursor=self.cursor)
+        var sub = JsonDeserializer[Self.origin, Self.repeat](cursor=self.cursor)
         return deserialize[T](sub)
 
     def end(mut self) raises DeserializationError:
@@ -686,7 +691,7 @@ struct JsonTupleDe[origin: MutOrigin](TupleDerState):
 
 
 @fieldwise_init
-struct JsonEnumDe[origin: MutOrigin](EnumDerState):
+struct JsonEnumDe[origin: MutOrigin, repeat: RepeatPolicy](EnumDerState):
     var cursor: Pointer[JsonCursor, Self.origin]
     var idx: Int
 
@@ -694,7 +699,7 @@ struct JsonEnumDe[origin: MutOrigin](EnumDerState):
         return self.idx
 
     def expect_payload[T: AnyType](mut self) raises DeserializationError -> T:
-        var sub = JsonDeserializer(cursor=self.cursor)
+        var sub = JsonDeserializer[Self.origin, Self.repeat](cursor=self.cursor)
         return deserialize[T](sub)
 
     def end(mut self) raises DeserializationError:
@@ -703,17 +708,18 @@ struct JsonEnumDe[origin: MutOrigin](EnumDerState):
 
 
 @fieldwise_init
-struct JsonDeserializer[origin: MutOrigin](
-    BorrowingDeserializer, SelfDescribingDeserializer
-):
+struct JsonDeserializer[
+    origin: MutOrigin, repeat: RepeatPolicy = RepeatPolicy.Error
+](BorrowingDeserializer, SelfDescribingDeserializer):
     var cursor: Pointer[JsonCursor, Self.origin]
 
-    comptime SeqType = JsonSeqDe[Self.origin]
-    comptime MapType = JsonMapDe[Self.origin]
-    comptime StructType = JsonStructDe[Self.origin]
-    comptime TupleType = JsonTupleDe[Self.origin]
-    comptime EnumType = JsonEnumDe[Self.origin]
+    comptime SeqType = JsonSeqDe[Self.origin, Self.repeat]
+    comptime MapType = JsonMapDe[Self.origin, Self.repeat]
+    comptime StructType = JsonStructDe[Self.origin, Self.repeat]
+    comptime TupleType = JsonTupleDe[Self.origin, Self.repeat]
+    comptime EnumType = JsonEnumDe[Self.origin, Self.repeat]
     comptime Value = JsonValue
+    comptime repeat_policy = Self.repeat
 
     def expect_bool(mut self) raises DeserializationError -> Bool:
         self.cursor[].skip_ws()
@@ -760,14 +766,14 @@ struct JsonDeserializer[origin: MutOrigin](
         if self.cursor[].peek() != ord("["):
             raise _mismatch(String("expected an array"))
         self.cursor[].expect_lit("[")
-        return JsonSeqDe(cursor=self.cursor)
+        return JsonSeqDe[Self.origin, Self.repeat](cursor=self.cursor)
 
     def begin_map(mut self) raises DeserializationError -> Self.MapType:
         self.cursor[].skip_ws()
         if self.cursor[].peek() != ord("{"):
             raise _mismatch(String("expected an object"))
         self.cursor[].expect_lit("{")
-        return JsonMapDe(cursor=self.cursor)
+        return JsonMapDe[Self.origin, Self.repeat](cursor=self.cursor)
 
     def begin_struct[
         T: AnyType
@@ -778,7 +784,7 @@ struct JsonDeserializer[origin: MutOrigin](
         if self.cursor[].peek() != ord("{"):
             raise _mismatch(String("expected an object"))
         self.cursor[].expect_lit("{")
-        return JsonStructDe(cursor=self.cursor)
+        return JsonStructDe[Self.origin, Self.repeat](cursor=self.cursor)
 
     def begin_tuple[
         field_count: Int
@@ -787,7 +793,9 @@ struct JsonDeserializer[origin: MutOrigin](
         if self.cursor[].peek() != ord("["):
             raise _mismatch(String("expected an array"))
         self.cursor[].expect_lit("[")
-        return JsonTupleDe(cursor=self.cursor, first=True)
+        return JsonTupleDe[Self.origin, Self.repeat](
+            cursor=self.cursor, first=True
+        )
 
     # Externally tagged `{"Arm":payload}`: consume up to and including the
     # `:`, resolve the arm name to an index; the closing `}` is `end`'s job.
@@ -810,7 +818,7 @@ struct JsonDeserializer[origin: MutOrigin](
             comptime an = get_static_string[arm_names[i]]()
             if idx == -1 and name == an:
                 idx = i
-        return JsonEnumDe(cursor=self.cursor, idx=idx)
+        return JsonEnumDe[Self.origin, Self.repeat](cursor=self.cursor, idx=idx)
 
     # Mirrors EmberJson's six `expect_*_bytes` parser entry points: one
     # validated skip, specialised by the kind the caller demands. The span
@@ -887,10 +895,12 @@ struct JsonDeserializer[origin: MutOrigin](
 
 
 def from_json[
-    T: Deinitable
+    T: Deinitable, repeat: RepeatPolicy = RepeatPolicy.Error
 ](var s: String, out result: T) raises DeserializationError:
     var cursor = JsonCursor(s^, 0)
-    var d = JsonDeserializer(cursor=Pointer(to=cursor))
+    var d = JsonDeserializer[origin_of(cursor), repeat](
+        cursor=Pointer(to=cursor)
+    )
     result = deserialize[T](d)
     d.cursor[].skip_ws()
     if not d.cursor[].at_end():

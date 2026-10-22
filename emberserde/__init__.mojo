@@ -14,6 +14,7 @@ from .deserialize import (
     SelfDescribingDeserializer,
     SeqDerState,
     MapDerState,
+    RepeatPolicy,
     StructDerState,
     TupleDerState,
     EnumDerState,

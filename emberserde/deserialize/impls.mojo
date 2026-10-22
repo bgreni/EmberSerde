@@ -14,6 +14,7 @@ from std.reflection import reflect
 from std.sys.info import size_of
 from std.utils import Variant
 from emberserde.deserialize import (
+    Appendable,
     Deserializable,
     Deserializer,
     SeqDerState,
@@ -194,7 +195,13 @@ def _staged_count[ET: AnyType]() -> Int:
     return max(1, min(16, 512 // max(1, size_of[ET]())))
 
 
-__extension List(Deserializable):
+__extension List(Appendable, Deserializable):
+    def serde_append(mut self, var other: Self):
+        comptime assert conforms_to(
+            Self.T, Movable
+        ), "List append requires Movable elements"
+        self.extend(other^)
+
     @staticmethod
     @always_inline
     def deserialize(
@@ -283,7 +290,25 @@ def _deserialize_items[
     return result^
 
 
-__extension Dict(Deserializable):
+__extension Dict(Appendable, Deserializable):
+    # Later entries replace earlier ones per key.
+    def serde_append(mut self, var other: Self):
+        comptime assert conforms_to(
+            Self.K, KeyElement & Deinitable
+        ) and conforms_to(
+            Self.V, Movable & Deinitable
+        ), "Dict append requires Deinitable keys and values"
+        comptime KT = downcast[Self.K, KeyElement & Deinitable]
+        comptime VT = downcast[Self.V, Movable & Deinitable]
+        ref into = rebind[Dict[KT, VT, Self.H]](self)
+
+        def put(var k: KT, var v: VT) {mut into}:
+            into[k^] = v^
+
+        var drain = rebind_var[Dict[KT, VT, Self.H]](other^)
+        for var entry in drain.take_items():
+            entry^.deinit_with(put)
+
     @staticmethod
     def deserialize(
         mut d: Some[Deserializer],
@@ -376,7 +401,7 @@ __extension Counter(Deserializable):
         while m.has_next():
             try:
                 var k = m.expect_key[Self.V]()
-                result[k^] = m.expect_value[Int]()
+                result[k] = m.expect_value[Int]()
             except e:
                 _prepend_index(e, idx)
                 raise e^
@@ -427,8 +452,7 @@ __extension Tuple(Deserializable):
         ](), "Tuple deserialize requires Defaultable elements"
         var result = Self()
 
-        @__parameter
-        def dispose[idx: Int](var elt: Self.Ts[idx]):
+        def dispose[idx: Int](var elt: Self.Ts[idx]) {imm}:
             _ = rebind_var[downcast[Self.Ts[idx], Base]](elt^)
 
         var filled = 0
@@ -443,7 +467,7 @@ __extension Tuple(Deserializable):
 
             state.end()
         except e:
-            result^.deinit_with[dispose]()
+            result^.deinit_with(dispose)
             _prepend_index(e, filled)
             raise e^
 

@@ -10,6 +10,7 @@ from _json_format import from_json, to_json, JsonValue, JsonDeserializer
 from emberserde.deserialize import (
     Deserializable,
     Deserializer,
+    RepeatPolicy,
     SelfDescribingDeserializer,
 )
 from emberserde.error import DerErrorKind, DeserializationError
@@ -18,6 +19,7 @@ from emberserde.struct_modifiers import (
     RenameAll,
     DenyUnknownFields,
 )
+from emberserde.validate import Range, Size
 
 
 @fieldwise_init
@@ -157,6 +159,62 @@ def test_struct_missing_required_raises() raises:
 def test_struct_duplicate_field_raises() raises:
     with assert_raises():
         _ = from_json[Point]('{"x":1,"x":2,"y":3}')
+
+
+@fieldwise_init
+struct Bag(Defaultable, Movable):
+    var name: String
+
+    @__annotation(Size(2, 3))
+    var xs: List[Int]
+    var m: Dict[String, Int]
+
+    @__annotation(Range(1, 65535))
+    var port: Int
+
+    def __init__(out self):
+        self.name = String()
+        self.xs = []
+        self.m = {}
+        self.port = 1
+
+
+def test_last_wins_replaces_every_repeated_field() raises:
+    var b = from_json[Bag, repeat=RepeatPolicy.LastWins](
+        '{"name":"a","xs":[1],"m":{"k":1},"port":0,'
+        '"name":"b","xs":[2,3],"m":{"j":2},"port":80}'
+    )
+    assert_equal(b.name, "b")
+    assert_equal(b.xs, [2, 3])
+    assert_equal(len(b.m), 1)
+    assert_equal(b.m["j"], 2)
+    # The check runs once, on the value the repeats left: port 0 never
+    # fails it.
+    assert_equal(b.port, 80)
+
+
+def test_append_seqs_extends_lists_and_maps() raises:
+    var b = from_json[Bag, repeat=RepeatPolicy.AppendSeqs](
+        '{"name":"n","xs":[1],"m":{"k":1,"j":1},"xs":[2],"m":{"j":2},"port":5}'
+    )
+    # Size(2, 3) sees the appended list, not [1].
+    assert_equal(b.xs, [1, 2])
+    assert_equal(b.m["k"], 1)
+    assert_equal(b.m["j"], 2)
+
+
+def test_append_seqs_still_rejects_a_repeated_scalar() raises:
+    var kind = DerErrorKind.Custom
+    var path = String()
+    try:
+        _ = from_json[Bag, repeat=RepeatPolicy.AppendSeqs](
+            '{"name":"n","xs":[1,2],"m":{},"port":5,"port":6}'
+        )
+    except e:
+        kind = e.kind
+        path = e.path
+    assert_equal(kind, DerErrorKind.DuplicateField)
+    assert_equal(path, ".port")
 
 
 def test_deny_unknown_fields_raises() raises:
