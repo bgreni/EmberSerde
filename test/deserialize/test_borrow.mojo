@@ -15,7 +15,8 @@ from emberserde.deserialize import (
 )
 from emberserde.error import DeserializationError, DerErrorKind
 
-from _json_format import JsonCursor, JsonDeserializer
+from _json_format import JsonDeserializer
+from _text_utils import TextCursor
 from _token_format import TokenDeserializer
 
 
@@ -54,7 +55,7 @@ struct LazyRaw[o: ImmOrigin, kind: RawKind](Deserializable, Movable):
 
 def _borrow[
     kind: RawKind
-](mut cursor: JsonCursor) raises DeserializationError -> LazyRaw[
+](mut cursor: TextCursor) raises DeserializationError -> LazyRaw[
     ImmutAnyOrigin, kind
 ]:
     var d = JsonDeserializer(cursor=Pointer(to=cursor))
@@ -64,44 +65,44 @@ def _borrow[
 def test_raw_bytes_str_keeps_quotes() raises:
     # The span is the raw wire token, so the quotes are part of it — callers
     # that want the contents strip them (EmberJson's `unsafe_as_string_slice`).
-    var cursor = JsonCursor(String('"hi"'), 0)
+    var cursor = TextCursor(String('"hi"'), 0)
     var lz = _borrow[RawKind.Str](cursor)
     assert_equal(String(lz.as_slice()), String('"hi"'))
 
 
 def test_raw_bytes_int() raises:
-    var cursor = JsonCursor(String("-42"), 0)
+    var cursor = TextCursor(String("-42"), 0)
     var lz = _borrow[RawKind.Integer](cursor)
     assert_equal(String(lz.as_slice()), String("-42"))
 
 
 def test_raw_bytes_float() raises:
-    var cursor = JsonCursor(String("3.5e2"), 0)
+    var cursor = TextCursor(String("3.5e2"), 0)
     var lz = _borrow[RawKind.Float](cursor)
     assert_equal(String(lz.as_slice()), String("3.5e2"))
 
 
 def test_raw_bytes_seq() raises:
-    var cursor = JsonCursor(String("[1, 2, [3]]"), 0)
+    var cursor = TextCursor(String("[1, 2, [3]]"), 0)
     var lz = _borrow[RawKind.Seq](cursor)
     assert_equal(String(lz.as_slice()), String("[1, 2, [3]]"))
 
 
 def test_raw_bytes_map() raises:
-    var cursor = JsonCursor(String('{"a": {"b": 1}}'), 0)
+    var cursor = TextCursor(String('{"a": {"b": 1}}'), 0)
     var lz = _borrow[RawKind.Map](cursor)
     assert_equal(String(lz.as_slice()), String('{"a": {"b": 1}}'))
 
 
 def test_raw_bytes_any_accepts_any_shape() raises:
-    var cursor = JsonCursor(String("true"), 0)
+    var cursor = TextCursor(String("true"), 0)
     var lz = _borrow[RawKind.Any](cursor)
     assert_equal(String(lz.as_slice()), String("true"))
 
 
 def test_raw_bytes_str_with_escape() raises:
     # An escaped quote must not end the token early.
-    var cursor = JsonCursor(String('"a\\"b"'), 0)
+    var cursor = TextCursor(String('"a\\"b"'), 0)
     var lz = _borrow[RawKind.Str](cursor)
     assert_equal(String(lz.as_slice()), String('"a\\"b"'))
 
@@ -109,19 +110,19 @@ def test_raw_bytes_str_with_escape() raises:
 def test_int_kind_rejects_float() raises:
     # Fail-fast validation: this is what a single generic `raw_value_bytes`
     # would have silently accepted, deferring the error to `get`.
-    var cursor = JsonCursor(String("1.5"), 0)
+    var cursor = TextCursor(String("1.5"), 0)
     with assert_raises():
         _ = _borrow[RawKind.Integer](cursor)
 
 
 def test_str_kind_rejects_number() raises:
-    var cursor = JsonCursor(String("12"), 0)
+    var cursor = TextCursor(String("12"), 0)
     with assert_raises():
         _ = _borrow[RawKind.Str](cursor)
 
 
 def test_map_kind_rejects_seq() raises:
-    var cursor = JsonCursor(String("[1]"), 0)
+    var cursor = TextCursor(String("[1]"), 0)
     with assert_raises():
         _ = _borrow[RawKind.Map](cursor)
 
@@ -129,7 +130,7 @@ def test_map_kind_rejects_seq() raises:
 def test_borrowed_span_aliases_the_input() raises:
     # The defining property: no copy. The returned span must point *into* the
     # cursor's own buffer, not at freshly allocated bytes.
-    var cursor = JsonCursor(String('   "borrowed"'), 0)
+    var cursor = TextCursor(String('   "borrowed"'), 0)
     var base = Int(cursor.buf.unsafe_ptr())
     var limit = base + cursor.buf.byte_length()
     var lz = _borrow[RawKind.Str](cursor)
@@ -139,7 +140,7 @@ def test_borrowed_span_aliases_the_input() raises:
 
 def test_cursor_advances_past_borrowed_value() raises:
     # The borrow consumes the value, so a following read starts after it.
-    var cursor = JsonCursor(String('["a", "b"]'), 0)
+    var cursor = TextCursor(String('["a", "b"]'), 0)
     var d = JsonDeserializer(cursor=Pointer(to=cursor))
     var st = d.begin_seq()
     _ = st.has_next()
@@ -153,10 +154,10 @@ def test_cursor_advances_past_borrowed_value() raises:
 def test_deferred_parse_of_borrowed_bytes() raises:
     # Laziness end to end: borrow the map's bytes, then interpret them later
     # by feeding the span back through a fresh deserializer.
-    var cursor = JsonCursor(String('{"x": 7}'), 0)
+    var cursor = TextCursor(String('{"x": 7}'), 0)
     var lz = _borrow[RawKind.Map](cursor)
 
-    var inner = JsonCursor(String(lz.as_slice()), 0)
+    var inner = TextCursor(String(lz.as_slice()), 0)
     var d = JsonDeserializer(cursor=Pointer(to=inner))
     var st = d.begin_map()
     _ = st.has_next()

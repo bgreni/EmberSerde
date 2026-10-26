@@ -1,6 +1,6 @@
 [workspace]
 authors = ["Brian Grenier <grenierb96@gmail.com>"]
-channels = ["https://conda.modular.com/max-nightly", "conda-forge"]
+channels = ["https://conda.modular.com/max", "conda-forge"]
 name = "emberserde"
 platforms = ["osx-arm64", "linux-aarch64", "linux-64"]
 version = "0.2.0"

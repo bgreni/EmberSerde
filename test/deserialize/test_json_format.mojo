@@ -84,6 +84,12 @@ def test_string_escapes() raises:
     assert_equal(from_json[String]('"say \\"hi\\""'), String('say "hi"'))
     assert_equal(from_json[String]('"a\\\\b"'), String("a\\b"))
     assert_equal(from_json[String]('"a\\nb\\tc\\rd"'), String("a\nb\tc\rd"))
+    assert_equal(from_json[String]('"\\b\\f\\/\\u00e9"'), String("\x08\x0c/é"))
+
+
+def test_raw_control_character_rejected() raises:
+    with assert_raises(contains="control character"):
+        _ = from_json[String]('"a\x01b"')
 
 
 def test_unicode_string() raises:

@@ -44,6 +44,7 @@ def test_string_escapes() raises:
     assert_equal(to_json(String('say "hi"')), '"say \\"hi\\""')
     assert_equal(to_json(String("a\\b")), '"a\\\\b"')
     assert_equal(to_json(String("a\nb\tc\rd")), '"a\\nb\\tc\\rd"')
+    assert_equal(to_json(String("a\x01b")), '"a\\u0001b"')
 
 
 def test_seq() raises:

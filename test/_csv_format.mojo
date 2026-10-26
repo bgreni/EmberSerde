@@ -22,6 +22,7 @@ from emberserde.error import (
 from emberserde.field_meta import field_index, next_wire_field, wire_field_names
 from emberserde.unsupported import Unsupported
 from emberserde.utils import Base
+from _text_utils import TextCursor
 
 # What a (de)serializer is positioned at. CSV is fixed two-level nesting, so
 # each level accepts exactly one shape and rejects the rest at runtime.
@@ -205,72 +206,58 @@ def to_csv[
 
 @fieldwise_init
 struct CsvCursor(Movable):
-    var buf: String
-    var pos: Int
+    var text: TextCursor
     var header: List[String]
 
-    def at_end(self) -> Bool:
-        return self.pos >= self.buf.byte_length()
-
-    def peek(self) -> Int:
-        if self.at_end():
-            return -1
-        return Int(self.buf.as_bytes()[self.pos])
-
     def at_line_end(self) -> Bool:
-        var c = self.peek()
+        var c = self.text.peek()
         return c == -1 or c == ord("\n") or c == ord("\r")
 
     def at_cell_end(self) -> Bool:
-        return self.at_line_end() or self.peek() == ord(",")
+        return self.at_line_end() or self.text.peek() == ord(",")
 
     def end_line(mut self):
-        if self.peek() == ord("\r"):
-            self.pos += 1
-        if self.peek() == ord("\n"):
-            self.pos += 1
-
-    def _slice(self, start: Int, end: Int) -> String:
-        return String(
-            StringSlice(unsafe_from_utf8=self.buf.as_bytes()[start:end])
-        )
+        if self.text.peek() == ord("\r"):
+            self.text.pos += 1
+        if self.text.peek() == ord("\n"):
+            self.text.pos += 1
 
     # Leaves the cursor on the cell's terminator (`,`, a line end, or EOF).
     def read_cell(mut self) raises DeserializationError -> String:
-        var start = self.pos
-        if self.peek() != ord('"'):
+        var start = self.text.pos
+        if self.text.peek() != ord('"'):
             while not self.at_cell_end():
-                self.pos += 1
-            return self._slice(start, self.pos)
-        self.pos += 1
+                self.text.pos += 1
+            return self.text.slice(start, self.text.pos)
+        self.text.pos += 1
         var result = String()
-        var run_start = self.pos
+        var run_start = self.text.pos
         while True:
-            if self.at_end():
+            if self.text.at_end():
                 raise _invalid("unterminated quoted cell")
-            if self.peek() != ord('"'):
-                self.pos += 1
+            if self.text.peek() != ord('"'):
+                self.text.pos += 1
                 continue
-            result += self._slice(run_start, self.pos)
-            self.pos += 1
-            if self.peek() != ord('"'):
+            result += self.text.slice(run_start, self.text.pos)
+            self.text.pos += 1
+            if self.text.peek() != ord('"'):
                 break
             # A doubled quote: the second one opens the next run, so it is
             # kept as a literal `"`.
-            run_start = self.pos
-            self.pos += 1
+            run_start = self.text.pos
+            self.text.pos += 1
         if not self.at_cell_end():
             raise _invalid("unexpected character after a closing quote")
         return result^
 
     def read_header(mut self) raises DeserializationError:
-        if self.at_end():
+        if self.text.at_end():
             return
         while True:
             self.header.append(self.read_cell())
             if self.at_line_end():
                 break
-            self.pos += 1
+            self.text.pos += 1
         self.end_line()
 
 
@@ -279,7 +266,7 @@ struct CsvSeqDe[origin: MutOrigin, has_headers: Bool](SeqDerState):
     var cursor: Pointer[CsvCursor, Self.origin]
 
     def has_next(mut self) raises DeserializationError -> Bool:
-        return not self.cursor[].at_end()
+        return not self.cursor[].text.at_end()
 
     def expect_element[T: AnyType](mut self) raises DeserializationError -> T:
         var sub = CsvDeserializer[Self.origin, Self.has_headers](
@@ -307,7 +294,7 @@ struct CsvRowDe[origin: MutOrigin, has_headers: Bool](
         if self.col > 0:
             if self.cursor[].at_line_end():
                 return False
-            self.cursor[].pos += 1
+            self.cursor[].text.pos += 1
         self.col += 1
         return True
 
@@ -433,7 +420,7 @@ struct CsvDeserializer[origin: MutOrigin, has_headers: Bool = True](
 def from_csv[
     T: Deinitable, has_headers: Bool = True
 ](var s: String, out result: T) raises DeserializationError:
-    var cursor = CsvCursor(s^, 0, [])
+    var cursor = CsvCursor(TextCursor(s^, 0), [])
     var d = CsvDeserializer[origin_of(cursor), has_headers](
         cursor=Pointer(to=cursor), level=_DOC
     )

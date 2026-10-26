@@ -28,7 +28,6 @@
 # are not checked, and the mapping's own `item`/`entry`/`key`/`value`
 # elements and `nil`/`variant` attributes match by local name.
 
-from std.collections.string import Codepoint
 from std.collections.string.string_span import get_static_string
 from std.reflection import reflect
 
@@ -76,6 +75,7 @@ from emberserde.struct_modifiers import (
     struct_annotations,
 )
 from emberserde.utils import Base
+from _text_utils import codepoint_string, hex_value, is_digit
 
 
 # The field is written as an attribute of its struct's element.
@@ -234,7 +234,7 @@ def _is_name_char(c: Int) -> Bool:
         _is_name_start(c)
         or c == ord("-")
         or c == ord(".")
-        or (c >= ord("0") and c <= ord("9"))
+        or is_digit(c)
         or c == 0xB7
         or (c >= 0x300 and c <= 0x36F)
         or (c >= 0x203F and c <= 0x2040)
@@ -245,7 +245,7 @@ def _is_pubid_char(c: Int) -> Bool:
     if (
         (c >= ord("a") and c <= ord("z"))
         or (c >= ord("A") and c <= ord("Z"))
-        or (c >= ord("0") and c <= ord("9"))
+        or is_digit(c)
     ):
         return True
     if c == 0x20 or c == 0xD or c == 0xA:
@@ -277,10 +277,6 @@ def _cp_at(b: Span[Byte, _], i: Int) -> Int:
     for k in range(1, n):
         cp = (cp << 6) | (Int(b[i + k]) & 0x3F)
     return cp
-
-
-def _cp_string(cp: Int) -> String:
-    return String(Codepoint(unsafe_unchecked_codepoint=UInt32(cp)))
 
 
 # The end of the Name at `i`, or `i` when none starts there.
@@ -859,13 +855,10 @@ def _mismatch(var message: String) -> DeserializationError:
 
 
 def _nibble(c: Int) raises DeserializationError -> Int:
-    if c >= ord("0") and c <= ord("9"):
-        return c - ord("0")
-    if c >= ord("a") and c <= ord("f"):
-        return c - ord("a") + 10
-    if c >= ord("A") and c <= ord("F"):
-        return c - ord("A") + 10
-    raise _invalid(String("invalid hex digit"))
+    var h = hex_value(c)
+    if h < 0:
+        raise _invalid(String("invalid hex digit"))
+    return h
 
 
 # The encoding an XML declaration names, or empty when there is none; `b`
@@ -933,7 +926,7 @@ def _utf16(
             u = 0x10000 + ((u - 0xD800) << 10) + (l - 0xDC00)
         elif u >= 0xDC00 and u <= 0xDFFF:
             raise _wf("unpaired UTF-16 surrogate")
-        out += _cp_string(u)
+        out += codepoint_string(u)
     return out^
 
 
@@ -984,7 +977,7 @@ def _decode(b: Span[Byte, _]) raises DeserializationError -> String:
     if enc == "ISO-8859-1" or enc == "LATIN1" or enc == "ISO_8859-1":
         var out = String()
         for i in range(start, n):
-            out += _cp_string(Int(b[i]))
+            out += codepoint_string(Int(b[i]))
         return out^
     if enc == "US-ASCII" or enc == "ASCII":
         for i in range(start, n):
@@ -1108,15 +1101,8 @@ def _char_ref(
     var v = 0
     var digits = 0
     while j < end and Int(b[j]) != ord(";"):
-        var c = Int(b[j])
-        var d: Int
-        if c >= ord("0") and c <= ord("9"):
-            d = c - ord("0")
-        elif hex and c >= ord("a") and c <= ord("f"):
-            d = c - ord("a") + 10
-        elif hex and c >= ord("A") and c <= ord("F"):
-            d = c - ord("A") + 10
-        else:
+        var d = hex_value(Int(b[j]))
+        if d < 0 or (not hex and d > 9):
             raise _wf("malformed character reference")
         v = min(v * (16 if hex else 10) + d, 0x110000)
         digits += 1
@@ -1342,7 +1328,7 @@ struct XmlReader(Movable):
         var q = self._quote()
         self._expect("1.")
         var digits = 0
-        while self._b(self.pos) >= ord("0") and self._b(self.pos) <= ord("9"):
+        while is_digit(self._b(self.pos)):
             self.pos += 1
             digits += 1
         if digits == 0 or self._b(self.pos) != q:
@@ -1367,7 +1353,7 @@ struct XmlReader(Movable):
                 if (
                     (e >= ord("A") and e <= ord("Z"))
                     or (e >= ord("a") and e <= ord("z"))
-                    or (e >= ord("0") and e <= ord("9"))
+                    or is_digit(e)
                     or e == ord(".")
                     or e == ord("_")
                     or e == ord("-")
@@ -1451,7 +1437,7 @@ struct XmlReader(Movable):
         if self._b(self.pos + 1) == ord("#"):
             var r = _char_ref(self.src.as_bytes(), self.pos + 2, n)
             self.pos = r.next
-            return _cp_string(r.cp)
+            return codepoint_string(r.cp)
         var ne = _name_end(self.src.as_bytes(), self.pos + 1, n)
         if ne == self.pos + 1 or self._b(ne) != ord(";"):
             raise _wf(String("'&' that doesn't start a reference"))
@@ -1513,7 +1499,7 @@ struct XmlReader(Movable):
             if c == ord("&"):
                 if i + 1 < n and Int(b[i + 1]) == ord("#"):
                     var r = _char_ref(b, i + 2, n)
-                    out += _cp_string(r.cp)
+                    out += codepoint_string(r.cp)
                     i = r.next
                     continue
                 var ne = _name_end(b, i + 1, n)
@@ -1552,7 +1538,7 @@ struct XmlReader(Movable):
                 var n = self.src.byte_length()
                 if self._b(self.pos + 1) == ord("#"):
                     var r = _char_ref(self.src.as_bytes(), self.pos + 2, n)
-                    out += _cp_string(r.cp)
+                    out += codepoint_string(r.cp)
                     self.pos = r.next
                     continue
                 var ne = _name_end(self.src.as_bytes(), self.pos + 1, n)
@@ -1891,7 +1877,7 @@ struct XmlReader(Movable):
                 var n = self.src.byte_length()
                 if self._b(self.pos + 1) == ord("#"):
                     var r = _char_ref(self.src.as_bytes(), self.pos + 2, n)
-                    out += _cp_string(r.cp)
+                    out += codepoint_string(r.cp)
                     self.pos = r.next
                     continue
                 var ne = _name_end(self.src.as_bytes(), self.pos + 1, n)

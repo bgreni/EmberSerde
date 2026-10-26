@@ -38,10 +38,10 @@ from emberserde.deserialize import (
 from emberserde.error import (
     SerializationError,
     DeserializationError,
-    DerErrorKind,
 )
 from emberserde.field_meta import field_index
 from emberserde.utils import Base
+from _text_utils import TextCursor
 
 
 @fieldwise_init
@@ -222,101 +222,35 @@ def debug_string[T: AnyType, //](value: T) raises SerializationError -> String:
 # Both directions share the same wire form, so the tests round-trip
 # `from_debug[T](debug_string(v)) == v`.
 #
-# The buffer + cursor live in a `DebugCursor` shared across recursion via a safe
-# `Pointer[DebugCursor, origin]`, mirroring how `DebugSerializer` threads its
+# The buffer + cursor live in a `TextCursor` shared across recursion via a safe
+# `Pointer[TextCursor, origin]`, mirroring how `DebugSerializer` threads its
 # output buffer.
 # ----------------------------------------------------------------------------
 
 
-def _de_error(message: String) -> DeserializationError:
-    return DeserializationError(message, DerErrorKind(0))
-
-
-@fieldwise_init
-struct DebugCursor(Movable):
-    var buf: String
-    var pos: Int
-
-    def at_end(self) -> Bool:
-        return self.pos >= self.buf.byte_length()
-
-    def peek(self) -> Int:
-        if self.at_end():
-            return -1
-        return Int(self.buf.as_bytes()[self.pos])
-
-    def advance(mut self):
-        self.pos += 1
-
-    def skip_ws(mut self):
-        while not self.at_end() and self.peek() == ord(" "):
-            self.advance()
-
-    def _slice(self, start: Int, end: Int) -> String:
-        # Build from the byte range directly — appending `chr()` per byte
-        # would re-encode each byte of a multi-byte UTF-8 sequence as its own
-        # code point. Offsets always sit on ASCII delimiters, so the range is
-        # valid UTF-8.
-        return String(
-            StringSlice(unsafe_from_utf8=self.buf.as_bytes()[start:end])
-        )
-
-    def starts_with(self, lit: StringSlice) -> Bool:
-        var lb = lit.as_bytes()
-        if self.pos + lit.byte_length() > self.buf.byte_length():
-            return False
-        var bb = self.buf.as_bytes()
-        for i in range(lit.byte_length()):
-            if bb[self.pos + i] != lb[i]:
-                return False
-        return True
-
-    def expect_lit(mut self, lit: StringSlice) raises DeserializationError:
-        if not self.starts_with(lit):
-            raise _de_error(String("expected '") + String(lit) + "'")
-        self.pos += lit.byte_length()
-
-    # Skip one whole value: scan to the next `,`/`}`/`]` at nesting depth
-    # zero, balancing brackets/braces/parens and jumping over strings. Used
-    # by `skip_value` to ignore unknown struct fields of any shape.
-    def skip_balanced(mut self):
-        var depth = 0
-        while not self.at_end():
-            var c = self.peek()
-            if depth == 0 and (c == ord(",") or c == ord("}") or c == ord("]")):
-                return
-            if c == ord('"'):
-                self.advance()
-                while not self.at_end() and self.peek() != ord('"'):
-                    self.advance()
-            elif c == ord("[") or c == ord("{") or c == ord("("):
-                depth += 1
-            elif c == ord("]") or c == ord("}") or c == ord(")"):
-                depth -= 1
-            self.advance()
-
-    # Read a run of numeric characters: `[-+0-9.eE]`.
-    def read_number(mut self) -> String:
-        var start = self.pos
-        while not self.at_end():
-            var c = self.peek()
-            var numeric = (
-                c == ord("-")
-                or c == ord("+")
-                or c == ord(".")
-                or c == ord("e")
-                or c == ord("E")
-                or (c >= ord("0") and c <= ord("9"))
-            )
-            if not numeric:
-                break
-            self.advance()
-        return self._slice(start, self.pos)
+# Skip one whole value: scan to the next `,`/`}`/`]` at nesting depth zero,
+# balancing brackets/braces/parens and jumping over strings. Used by
+# `skip_value` to ignore unknown struct fields of any shape.
+def _skip_balanced(mut c: TextCursor):
+    var depth = 0
+    while not c.at_end():
+        var b = c.peek()
+        if depth == 0 and (b == ord(",") or b == ord("}") or b == ord("]")):
+            return
+        if b == ord('"'):
+            c.advance()
+            while not c.at_end() and c.peek() != ord('"'):
+                c.advance()
+        elif b == ord("[") or b == ord("{") or b == ord("("):
+            depth += 1
+        elif b == ord("]") or b == ord("}") or b == ord(")"):
+            depth -= 1
+        c.advance()
 
 
 @fieldwise_init
 struct DebugSeqDe[origin: MutOrigin](SeqDerState):
-    var cursor: Pointer[DebugCursor, Self.origin]
+    var cursor: Pointer[TextCursor, Self.origin]
 
     def has_next(mut self) raises DeserializationError -> Bool:
         self.cursor[].skip_ws()
@@ -338,7 +272,7 @@ struct DebugSeqDe[origin: MutOrigin](SeqDerState):
 
 @fieldwise_init
 struct DebugMapDe[origin: MutOrigin](MapDerState):
-    var cursor: Pointer[DebugCursor, Self.origin]
+    var cursor: Pointer[TextCursor, Self.origin]
 
     def has_next(mut self) raises DeserializationError -> Bool:
         self.cursor[].skip_ws()
@@ -367,7 +301,7 @@ struct DebugMapDe[origin: MutOrigin](MapDerState):
 
 @fieldwise_init
 struct DebugStructDe[origin: MutOrigin](StructDerState):
-    var cursor: Pointer[DebugCursor, Self.origin]
+    var cursor: Pointer[TextCursor, Self.origin]
 
     def expect_field_index[
         T: AnyType
@@ -386,7 +320,7 @@ struct DebugStructDe[origin: MutOrigin](StructDerState):
             and self.cursor[].peek() != ord(" ")
         ):
             self.cursor[].advance()
-        var name = self.cursor[]._slice(start, self.cursor[].pos)
+        var name = self.cursor[].slice(start, self.cursor[].pos)
         self.cursor[].skip_ws()
         self.cursor[].expect_lit(":")
         self.cursor[].skip_ws()
@@ -400,7 +334,7 @@ struct DebugStructDe[origin: MutOrigin](StructDerState):
 
     def skip_value(mut self) raises DeserializationError:
         self.cursor[].skip_ws()
-        self.cursor[].skip_balanced()
+        _skip_balanced(self.cursor[])
 
     def end(mut self) raises DeserializationError:
         self.cursor[].skip_ws()
@@ -409,7 +343,7 @@ struct DebugStructDe[origin: MutOrigin](StructDerState):
 
 @fieldwise_init
 struct DebugTupleDe[origin: MutOrigin](TupleDerState):
-    var cursor: Pointer[DebugCursor, Self.origin]
+    var cursor: Pointer[TextCursor, Self.origin]
     var first: Bool
 
     def expect_element[T: AnyType](mut self) raises DeserializationError -> T:
@@ -428,7 +362,7 @@ struct DebugTupleDe[origin: MutOrigin](TupleDerState):
 
 @fieldwise_init
 struct DebugEnumDe[origin: MutOrigin](EnumDerState):
-    var cursor: Pointer[DebugCursor, Self.origin]
+    var cursor: Pointer[TextCursor, Self.origin]
     var idx: Int
 
     def variant_index(mut self) raises DeserializationError -> Int:
@@ -445,7 +379,7 @@ struct DebugEnumDe[origin: MutOrigin](EnumDerState):
 
 @fieldwise_init
 struct DebugDeserializer[origin: MutOrigin](Deserializer):
-    var cursor: Pointer[DebugCursor, Self.origin]
+    var cursor: Pointer[TextCursor, Self.origin]
 
     comptime SeqType = DebugSeqDe[Self.origin]
     comptime MapType = DebugMapDe[Self.origin]
@@ -478,7 +412,7 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         var start = self.cursor[].pos
         while not self.cursor[].at_end() and self.cursor[].peek() != ord('"'):
             self.cursor[].advance()
-        var s = self.cursor[]._slice(start, self.cursor[].pos)
+        var s = self.cursor[].slice(start, self.cursor[].pos)
         self.cursor[].expect_lit('"')
         return s^
 
@@ -533,7 +467,7 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
         var start = self.cursor[].pos
         while not self.cursor[].at_end() and self.cursor[].peek() != ord("("):
             self.cursor[].advance()
-        var name = self.cursor[]._slice(start, self.cursor[].pos)
+        var name = self.cursor[].slice(start, self.cursor[].pos)
         self.cursor[].expect_lit("(")
         var idx = -1
         # `comptime for` over the interned candidates: no per-value list.
@@ -548,6 +482,6 @@ struct DebugDeserializer[origin: MutOrigin](Deserializer):
 
 
 def from_debug[T: AnyType](var s: String) raises DeserializationError -> T:
-    var cursor = DebugCursor(s^, 0)
+    var cursor = TextCursor(s^, 0)
     var d = DebugDeserializer(cursor=Pointer(to=cursor))
     return deserialize[T](d)
