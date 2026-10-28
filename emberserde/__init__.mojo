@@ -19,6 +19,7 @@ from .deserialize import (
     TupleDerState,
     EnumDerState,
     checked_scalar,
+    may_be_absent,
     deserialize,
     deserialize_struct,
 )

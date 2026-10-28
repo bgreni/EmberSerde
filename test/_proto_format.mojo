@@ -60,11 +60,8 @@ from emberserde.deserialize import (
     TupleDerState,
     EnumDerState,
     deserialize,
+    may_be_absent,
 )
-
-# Private, but exactly the question the gather has to answer: whether the
-# framework fills an absent field itself.
-from emberserde.deserialize import _fill_if_missing
 from emberserde.error import (
     SerializationError,
     SerErrorKind,
@@ -1564,7 +1561,7 @@ struct ProtoDeserializer[origin: MutOrigin](Deserializer):
             st.descs.append(d^)
             # The framework fills Optional/Skip/Default fields itself; every
             # other field absent from the wire reads as its zero value.
-            st.yield_absent.append(not _fill_if_missing[T, i]())
+            st.yield_absent.append(not may_be_absent[T, i]())
         var unknown = List[Occ]()
         var bad_entry = List[Int]()
         _gather(

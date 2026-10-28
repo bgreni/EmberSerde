@@ -1,4 +1,5 @@
 from std.builtin.rebind import downcast
+from std.math import isinf
 from std.reflection import reflect
 
 from .impls import *
@@ -74,7 +75,7 @@ def _all_dtors_are_trivial[T: AnyType]() -> Bool:
 
 # May field `i` be absent from the wire? `Optional` always; otherwise only when
 # it is `Skip` or carries a `Default`. Everything else is required.
-def _fill_if_missing[T: AnyType, i: Int]() -> Bool:
+def may_be_absent[T: AnyType, i: Int]() -> Bool:
     comptime FT = reflect[T].field_types()[i]
     return (
         __is_optional[FT]()
@@ -225,6 +226,21 @@ def _validate_struct[T: AnyType](t: T) raises DeserializationError:
                 raise _check_failed(check.message())
 
 
+@no_inline
+def _invalid_number(tok: String) -> DeserializationError:
+    return DeserializationError(
+        String(t"invalid number: '{tok}'"), DerErrorKind.InvalidValue
+    )
+
+
+@no_inline
+def _out_of_range[DT: DType](tok: String) -> DeserializationError:
+    return DeserializationError(
+        String(t"number out of range for {DT}: '{tok}'"),
+        DerErrorKind.InvalidValue,
+    )
+
+
 # Parse a numeric token into `Scalar[DT]`, raising instead of silently
 # wrapping: `checked_scalar[DType.uint8]("300")` is an error, not 44. Text
 # formats should parse numbers through this rather than `Scalar[DT](atol(...))`,
@@ -233,38 +249,59 @@ def checked_scalar[
     DT: DType
 ](tok: String) raises DeserializationError -> Scalar[DT]:
     comptime if DT.is_floating_point():
+        var result: Scalar[DT]
         try:
-            return atof(tok).cast[DT]()
+            result = atof(tok).cast[DT]()
         except:
-            raise DeserializationError(
-                String(t"invalid number: '{tok}'"),
-                DerErrorKind.InvalidValue,
-            )
+            raise _invalid_number(tok)
+        # Overflow parses or casts to inf; only a spelled-out infinity may.
+        if isinf(result) and "inf" not in tok.lower():
+            raise _out_of_range[DT](tok)
+        return result
     else:
         var i: Int
         try:
             i = atol(tok)
         except:
-            raise DeserializationError(
-                String(t"invalid number: '{tok}'"),
-                DerErrorKind.InvalidValue,
-            )
+            comptime if DT.is_unsigned():
+                return _parse_unsigned[DT](tok)
+            else:
+                raise _invalid_number(tok)
         comptime if DT.is_unsigned():
             if i < 0:
-                raise DeserializationError(
-                    String(t"number out of range for {DT}: '{tok}'"),
-                    DerErrorKind.InvalidValue,
-                )
+                raise _out_of_range[DT](tok)
         var result = Scalar[DT](i)
         # A 64-bit `Int` survives the round trip through DT iff it fits;
         # a mismatch means truncation (negatives were rejected above, so
         # unsigned wrap-back can't fool the comparison).
         if Int(result) != i:
-            raise DeserializationError(
-                String(t"number out of range for {DT}: '{tok}'"),
-                DerErrorKind.InvalidValue,
-            )
+            raise _out_of_range[DT](tok)
         return result
+
+
+# `atol` stops at Int.MAX, short of the top of a 64-bit unsigned range, so
+# tokens it rejects get a second read straight into `DT`: decimal digits, with
+# `atol`'s rule that an underscore sits only between two digits.
+def _parse_unsigned[
+    DT: DType
+](tok: String) raises DeserializationError -> Scalar[DT]:
+    var result = Scalar[DT](0)
+    var after_digit = False
+    for b in tok.as_bytes():
+        var c = Int(b)
+        if c == ord("_") and after_digit:
+            after_digit = False
+            continue
+        if c < ord("0") or c > ord("9"):
+            raise _invalid_number(tok)
+        var digit = Scalar[DT](c - ord("0"))
+        if result > (Scalar[DT].MAX - digit) // 10:
+            raise _out_of_range[DT](tok)
+        result = result * 10 + digit
+        after_digit = True
+    if not after_digit:
+        raise _invalid_number(tok)
+    return result
 
 
 # What a repeated struct field means. The default makes any repeat a
@@ -549,7 +586,7 @@ def deserialize_struct[
     comptime for i in range(r.field_count()):
         comptime declared_name = names[i]
         if not seen.contains[i]():
-            comptime if _fill_if_missing[T, i]():
+            comptime if may_be_absent[T, i]():
                 _fill_missing[T, i](result)
             else:
                 raise _missing_field(declared_name)

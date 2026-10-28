@@ -50,7 +50,7 @@ from emberserde.deserialize import (
     TupleDerState,
     EnumDerState,
     RepeatPolicy,
-    _fill_if_missing,
+    may_be_absent,
     checked_scalar,
     deserialize,
 )
@@ -2902,7 +2902,7 @@ struct XmlDe[origin: MutOrigin](Deserializer):
         )
         comptime for i in range(n):
             st.names.append(static_wire_name[T, i]())
-            st.serve_absent.append(not _fill_if_missing[T, i]())
+            st.serve_absent.append(not may_be_absent[T, i]())
             st.yielded.append(False)
             comptime if count_annotations[T, i, XmlText]() > 0:
                 st.text_field = i

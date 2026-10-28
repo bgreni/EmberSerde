@@ -23,6 +23,7 @@ def test_unsigned_ints() raises:
     assert_equal(from_debug[UInt16]("16"), UInt16(16))
     assert_equal(from_debug[UInt32]("32"), UInt32(32))
     assert_equal(from_debug[UInt64]("64"), UInt64(64))
+    assert_equal(from_debug[UInt64]("18446744073709551615"), UInt64.MAX)
 
 
 def test_unicode_string() raises:
@@ -40,6 +41,12 @@ def test_numeric_narrowing_rejected() raises:
         _ = from_debug[Int8]("200")
     with assert_raises():
         _ = from_debug[Int16]("40000")
+    with assert_raises():
+        _ = from_debug[UInt64]("18446744073709551616")
+    with assert_raises():
+        _ = from_debug[Float32]("1e39")
+    with assert_raises():
+        _ = from_debug[Float64]("1e400")
     # Boundary values still parse.
     assert_equal(from_debug[UInt8]("255"), UInt8(255))
     assert_equal(from_debug[Int8]("-128"), Int8(-128))

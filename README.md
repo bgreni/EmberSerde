@@ -11,12 +11,12 @@ direction and get every type for free.
 
 ## Installation
 
-Requires **Mojo 1.1.0**. Add the repo as a git dependency
+Requires **Mojo 1.2.0**. Add the repo as a git dependency
 and pixi builds the `.mojoc` for you:
 
 ```toml
 [dependencies]
-emberserde = { git = "https://github.com/bgreni/EmberSerde.git", branch = "main" }
+emberserde = { git = "https://github.com/bgreni/EmberSerde.git", tag = "0.2.0" }
 ```
 
 ## Quick start
@@ -219,7 +219,7 @@ struct Celsius(Copyable, Movable, Serializable, Deserializable):
 ```
 
 `checked_scalar` parses a numeric token into any `DType` and raises on
-overflow instead of wrapping.
+overflow instead of wrapping or rounding to `inf`.
 
 ### Field attributes
 
@@ -519,6 +519,12 @@ On the read side the struct state returns field *indices*, not names, from
 - An ordered format with no names on the wire steps through
   `next_wire_field[T](start)`, which skips `Skip` fields so values stay
   aligned.
+
+Some wire forms leave fields out by design: protobuf omits zero values, and
+XML writes an empty list as no elements at all. `may_be_absent[T, i]()` tells
+such a format whether the framework fills an absent field `i` on its own
+(`Optional`, `Skip`, `Default`). For any other absent field the format must
+still yield its index and supply the value, or the read raises `MissingField`.
 
 A non-self-describing format must also override `serialize_some` to write a
 presence marker, since `Some(v)` and a bare `v` would otherwise be

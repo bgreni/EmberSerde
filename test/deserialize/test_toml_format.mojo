@@ -66,6 +66,14 @@ struct Count(Copyable, Defaultable, Movable):
 
 
 @fieldwise_init
+struct Wide(Copyable, Defaultable, Movable):
+    var n: UInt64
+
+    def __init__(out self):
+        self.n = 0
+
+
+@fieldwise_init
 struct Spaced(Copyable, Defaultable, Movable):
     @__annotation(Rename("user name"))
     var user: String
@@ -169,6 +177,20 @@ def test_quoted_number_is_a_type_mismatch() raises:
     assert_equal(
         _kind_and_path[Count]('n = "3"\n')[0], DerErrorKind.TypeMismatch
     )
+
+
+def test_wide_unsigned_with_underscores() raises:
+    assert_equal(
+        from_toml[Wide]("n = 18_446_744_073_709_551_615\n").n, UInt64.MAX
+    )
+    var bad = [
+        "_18446744073709551615",
+        "18446744073709551615_",
+        "18__446744073709551615",
+    ]
+    for text in bad:
+        var r = _kind_and_path[Wide](String("n = ") + text + "\n")
+        assert_equal(r[0], DerErrorKind.InvalidValue, text)
 
 
 def test_invalid_datetimes() raises:
